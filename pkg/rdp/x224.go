@@ -1,4 +1,4 @@
-// RDP Screenshotte Go - Capture screenshots from RDP servers
+// RDP Screenshotter Go - Capture screenshots from RDP servers
 // Copyright (C) 2025 - Pepijn van der Stap, pepijn@neosecurity.nl
 //
 // This program is free software: you can redistribute it and/or modify
