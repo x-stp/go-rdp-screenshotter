@@ -17,44 +17,124 @@
 package rdp
 
 import (
-	"crypto/tls"
 	"fmt"
+	"net"
+	"time"
+
+	ztls "github.com/zmap/zcrypto/tls"
 )
 
-// StartTLS upgrades the connection to TLS
-// @todo drop store []certs as we drop the cert validation
-// so can at least inspect chain and such.
-func (c *Client) StartTLS() error {
-	fmt.Println("Starting TLS handshake...")
+// TLSConfig holds TLS configuration for RDP connections
+type TLSConfig struct {
+	// ServerName for SNI
+	ServerName string
 
-	tlsConfig := &tls.Config{
-		InsecureSkipVerify: true, // accepted risk; this isn't a offsec exercise. we take screenshots.
-		MinVersion:         tls.VersionTLS10,
-		MaxVersion:         tls.VersionTLS12,
+	// InsecureSkipVerify allows connections to servers with invalid certificates
+	InsecureSkipVerify bool
+
+	// Timeout for TLS handshake
+	Timeout time.Duration
+}
+
+// DefaultTLSConfig returns a default TLS configuration for RDP
+func DefaultTLSConfig(serverName string) *TLSConfig {
+	return &TLSConfig{
+		ServerName:         serverName,
+		InsecureSkipVerify: true, // RDP servers often have self-signed certs
+		Timeout:            10 * time.Second,
+	}
+}
+
+// upgradeTLSConnection upgrades an existing TCP connection to TLS
+func (c *Client) upgradeTLSConnection(tlsConfig *TLSConfig) error {
+	// Extract hostname from target if not provided
+	if tlsConfig.ServerName == "" {
+		host, _, err := net.SplitHostPort(c.target)
+		if err != nil {
+			tlsConfig.ServerName = c.target
+		} else {
+			tlsConfig.ServerName = host
+		}
 	}
 
-	// Upgrade the connection to TLS
-	tlsConn := tls.Client(c.conn, tlsConfig)
+	// Create zcrypto TLS configuration
+	config := &ztls.Config{
+		ServerName:         tlsConfig.ServerName,
+		InsecureSkipVerify: tlsConfig.InsecureSkipVerify,
+		MinVersion:         ztls.VersionTLS10,
+		MaxVersion:         ztls.VersionTLS12,
+		CipherSuites: []uint16{
+			// Include common cipher suites that RDP servers use
+			ztls.TLS_RSA_WITH_AES_128_CBC_SHA,
+			ztls.TLS_RSA_WITH_AES_256_CBC_SHA,
+			ztls.TLS_RSA_WITH_AES_128_GCM_SHA256,
+			ztls.TLS_RSA_WITH_AES_256_GCM_SHA384,
+			ztls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
+			ztls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+			ztls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+			ztls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+		},
+	}
+
+	// Set deadline for TLS handshake
+	if err := c.conn.SetDeadline(time.Now().Add(tlsConfig.Timeout)); err != nil {
+		return fmt.Errorf("failed to set TLS deadline: %w", err)
+	}
+
+	// Upgrade connection to TLS
+	tlsConn := ztls.Client(c.conn, config)
 
 	// Perform TLS handshake
 	if err := tlsConn.Handshake(); err != nil {
 		return fmt.Errorf("TLS handshake failed: %w", err)
 	}
 
-	// Swap in-flight no close, reopen.. @TODO needs profiling
-	c.conn = tlsConn
+	// Clear deadline
+	if err := tlsConn.SetDeadline(time.Time{}); err != nil {
+		return fmt.Errorf("failed to clear TLS deadline: %w", err)
+	}
 
+	// Log TLS connection details
 	state := tlsConn.ConnectionState()
-	fmt.Printf("TLS handshake completed!! Handshake details: Version=0x%04X, CipherSuite=0x%04X\n",
-		state.Version, state.CipherSuite)
+	fmt.Printf("TLS connection established:\n")
+	fmt.Printf("  Version: %s\n", tlsVersionString(state.Version))
+	fmt.Printf("  Cipher Suite: 0x%04X\n", state.CipherSuite)
+	fmt.Printf("  Server Name: %s\n", tlsConfig.ServerName)
+
+	if len(state.PeerCertificates) > 0 {
+		cert := state.PeerCertificates[0]
+		fmt.Printf("  Certificate Subject: %s\n", cert.Subject)
+		fmt.Printf("  Certificate Issuer: %s\n", cert.Issuer)
+	}
+
+	// Replace the connection with TLS connection
+	c.conn = tlsConn
+	c.tlsEnabled = true
 
 	return nil
 }
 
-// isTLSRequired checks if the server requires TLS based on negotiation
-// @TODO implement this
-func isTLSRequired(negotiatedProtocol uint32) bool {
-	return negotiatedProtocol&PROTOCOL_SSL != 0 ||
-		negotiatedProtocol&PROTOCOL_HYBRID != 0 ||
-		negotiatedProtocol&PROTOCOL_HYBRID_EX != 0
+// tlsVersionString returns a human-readable TLS version string
+func tlsVersionString(version uint16) string {
+	switch version {
+	case 0x0002:
+		return "SSL 2.0" // solaris? RISC should be banned from the internet
+	case ztls.VersionSSL30:
+		return "SSL 3.0"
+	case ztls.VersionTLS10:
+		return "TLS 1.0"
+	case ztls.VersionTLS11:
+		return "TLS 1.1"
+	case ztls.VersionTLS12:
+		return "TLS 1.2"
+	case 0x0304: // TLS 1.3 constant - likely fake RDP service as TLS1.3 and MS don't go hand in hand
+		return "TLS 1.3"
+	default:
+		return fmt.Sprintf("Unknown (0x%04x)", version)
+	}
+}
+
+// isTLSRequired checks if the negotiated protocol requires TLS
+func isTLSRequired(protocol uint32) bool {
+	return protocol == PROTOCOL_SSL || protocol == PROTOCOL_HYBRID || protocol == PROTOCOL_HYBRID_EX
 }
