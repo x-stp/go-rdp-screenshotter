@@ -1,0 +1,70 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+
+# Build output
+rdp-screenshotter
+/rdp-screenshotter
+/credssp-test
+/security-validator
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Documentation directory (MS-RDPBCGR spec)
+docs/
+
+# Python conversion script
+convert_pdf_to_md.py
+
+# Screenshots output directory
+screenshots/
+
+# Target lists (local testing, never commit)
+target.txt
+test.txt
+ips.txt
+*_targets.txt
+*_target.txt
+*_test.txt
+*_nla.txt
+targets-test.txt
+comprehensive-test.txt
+potential_targets.txt
+rdp_targets.txt
+
+# Cursor session artifacts (research notes, baselines, plans)
+.cursor/
+
+# Editor / agent local config
+.claude/
+
+# Local research / baseline pcaps and other large blobs
+*.pcap
+*shodan*
+*.json.gz
+rdp_fresh*
+ips.txt
