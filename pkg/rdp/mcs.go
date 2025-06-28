@@ -8,586 +8,414 @@
 //
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Affero General Public License for more details.
 //
 // You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 package rdp
 
 import (
 	"bytes"
+	"crypto/rsa"
 	"encoding/binary"
 	"fmt"
 	"io"
-)
+	"math/big"
 
-// MCS Connect Initial PDU structure (T.125)
-// This is a simplified version focusing on RDP requirements
+	"github.com/zmap/zcrypto/x509"
+)
 
 // BER encoding helpers (ITU-T X.690)
 func berEncodeLength(w io.Writer, length int) error {
 	if length < 128 {
-		// Short form
 		return binary.Write(w, binary.BigEndian, uint8(length))
 	}
-
-	// Long form (up to 2 bytes for our use case)
 	if length < 256 {
-		binary.Write(w, binary.BigEndian, uint8(0x81)) // 1 length octet follows
+		binary.Write(w, binary.BigEndian, uint8(0x81))
 		return binary.Write(w, binary.BigEndian, uint8(length))
 	}
-
-	// 2 bytes
-	binary.Write(w, binary.BigEndian, uint8(0x82)) // 2 length octets follow
+	binary.Write(w, binary.BigEndian, uint8(0x82))
 	return binary.Write(w, binary.BigEndian, uint16(length))
 }
 
-// MCSConnectInitial represents the MCS Connect Initial PDU
-type MCSConnectInitial struct {
-	// We'll build this as raw bytes for simplicity
-	// In a production system, you'd want proper ASN.1 encoding
-}
-
-// buildMCSConnectInitial creates a minimal MCS Connect Initial PDU for RDP
-func buildMCSConnectInitial() ([]byte, error) {
+// buildMCSConnectInitial creates an MCS Connect Initial PDU
+func buildMCSConnectInitial(negotiatedProtocol uint32) ([]byte, error) {
 	buf := new(bytes.Buffer)
-
-	// MCS Connect Initial structure (T.125 section 11.1)
-	// This is a BER-encoded structure
-
-	// Application tag 101 (0x65) with CONSTRUCTED bit set = 0x7F65
 	buf.WriteByte(0x7F)
 	buf.WriteByte(0x65)
-
-	// We'll calculate and write the length later
 	lengthPos := buf.Len()
-	buf.WriteByte(0x00) // Placeholder for length
+	buf.WriteByte(0x82)
 	buf.WriteByte(0x00)
-
-	// callingDomainSelector (OCTET STRING) - "1"
-	buf.WriteByte(0x04) // OCTET STRING tag
-	buf.WriteByte(0x01) // Length
-	buf.WriteByte(0x01) // Value "1"
-
-	// calledDomainSelector (OCTET STRING) - "1"
-	buf.WriteByte(0x04) // OCTET STRING tag
-	buf.WriteByte(0x01) // Length
-	buf.WriteByte(0x01) // Value "1"
-
-	// upwardFlag (BOOLEAN) - TRUE
-	buf.WriteByte(0x01) // BOOLEAN tag
-	buf.WriteByte(0x01) // Length
-	buf.WriteByte(0xFF) // TRUE
-
-	// targetParameters - DomainParameters
-	buf.WriteByte(0x30) // SEQUENCE tag
-	buf.WriteByte(0x19) // Length (25 bytes)
-
-	// maxChannelIds
-	buf.WriteByte(0x02) // INTEGER tag
-	buf.WriteByte(0x01) // Length
-	buf.WriteByte(0x22) // 34
-
-	// maxUserIds
-	buf.WriteByte(0x02) // INTEGER tag
-	buf.WriteByte(0x01) // Length
-	buf.WriteByte(0x02) // 2
-
-	// maxTokenIds
-	buf.WriteByte(0x02) // INTEGER tag
-	buf.WriteByte(0x01) // Length
-	buf.WriteByte(0x00) // 0
-
-	// numPriorities
-	buf.WriteByte(0x02) // INTEGER tag
-	buf.WriteByte(0x01) // Length
-	buf.WriteByte(0x01) // 1
-
-	// minThroughput
-	buf.WriteByte(0x02) // INTEGER tag
-	buf.WriteByte(0x01) // Length
-	buf.WriteByte(0x00) // 0
-
-	// maxHeight
-	buf.WriteByte(0x02) // INTEGER tag
-	buf.WriteByte(0x01) // Length
-	buf.WriteByte(0x01) // 1
-
-	// maxMCSPDUsize
-	buf.WriteByte(0x02) // INTEGER tag
-	buf.WriteByte(0x02) // Length
-	buf.WriteByte(0xFF) // 65535
-	buf.WriteByte(0xFF)
-
-	// protocolVersion
-	buf.WriteByte(0x02) // INTEGER tag
-	buf.WriteByte(0x01) // Length
-	buf.WriteByte(0x00) // 0
-
-	// minimumParameters - DomainParameters (same structure, minimal values)
-	buf.WriteByte(0x30) // SEQUENCE tag
-	buf.WriteByte(0x19) // Length
-	// ... (similar to targetParameters but with minimal values)
-	// For brevity, using same values as target
-	buf.Write([]byte{
-		0x02, 0x01, 0x01, // maxChannelIds = 1
-		0x02, 0x01, 0x01, // maxUserIds = 1
-		0x02, 0x01, 0x01, // maxTokenIds = 1
-		0x02, 0x01, 0x01, // numPriorities = 1
-		0x02, 0x01, 0x00, // minThroughput = 0
-		0x02, 0x01, 0x01, // maxHeight = 1
-		0x02, 0x02, 0x04, 0x00, // maxMCSPDUsize = 1024
-		0x02, 0x01, 0x00, // protocolVersion = 0
-	})
-
-	// maximumParameters - DomainParameters
-	buf.WriteByte(0x30) // SEQUENCE tag
-	buf.WriteByte(0x1C) // Length
-	buf.Write([]byte{
-		0x02, 0x02, 0xFF, 0xFF, // maxChannelIds = 65535
-		0x02, 0x02, 0xFC, 0x17, // maxUserIds = 64535
-		0x02, 0x02, 0xFF, 0xFF, // maxTokenIds = 65535
-		0x02, 0x01, 0x01, // numPriorities = 1
-		0x02, 0x01, 0x00, // minThroughput = 0
-		0x02, 0x01, 0x01, // maxHeight = 1
-		0x02, 0x02, 0xFF, 0xFF, // maxMCSPDUsize = 65535
-		0x02, 0x01, 0x00, // protocolVersion = 0
-	})
-
-	// userData (OCTET STRING) - This will contain the RDP-specific data
-	userData := buildRDPUserData()
-	buf.WriteByte(0x04) // OCTET STRING tag
+	buf.WriteByte(0x00)
+	// callingDomainSelector
+	buf.Write([]byte{0x04, 0x01, 0x01})
+	// calledDomainSelector
+	buf.Write([]byte{0x04, 0x01, 0x01})
+	// upwardFlag
+	buf.Write([]byte{0x01, 0x01, 0xFF})
+	// targetParameters
+	buf.Write([]byte{0x30, 0x19})
+	buf.Write([]byte{0x02, 0x01, 0x22})       // maxChannelIds
+	buf.Write([]byte{0x02, 0x01, 0x02})       // maxUserIds
+	buf.Write([]byte{0x02, 0x01, 0x00})       // maxTokenIds
+	buf.Write([]byte{0x02, 0x01, 0x01})       // numPriorities
+	buf.Write([]byte{0x02, 0x01, 0x00})       // minThroughput
+	buf.Write([]byte{0x02, 0x01, 0x01})       // maxHeight
+	buf.Write([]byte{0x02, 0x02, 0xFF, 0xFF}) // maxMCSPDUsize
+	buf.Write([]byte{0x02, 0x01, 0x02})       // protocolVersion
+	// minimumParameters
+	buf.Write([]byte{0x30, 0x19})
+	buf.Write([]byte{0x02, 0x01, 0x01})       // maxChannelIds
+	buf.Write([]byte{0x02, 0x01, 0x01})       // maxUserIds
+	buf.Write([]byte{0x02, 0x01, 0x01})       // maxTokenIds
+	buf.Write([]byte{0x02, 0x01, 0x01})       // numPriorities
+	buf.Write([]byte{0x02, 0x01, 0x00})       // minThroughput
+	buf.Write([]byte{0x02, 0x01, 0x01})       // maxHeight
+	buf.Write([]byte{0x02, 0x02, 0x04, 0x00}) // maxMCSPDUsize
+	buf.Write([]byte{0x02, 0x01, 0x02})       // protocolVersion
+	// maximumParameters
+	buf.Write([]byte{0x30, 0x1C})
+	buf.Write([]byte{0x02, 0x02, 0xFF, 0xFF}) // maxChannelIds
+	buf.Write([]byte{0x02, 0x02, 0xFC, 0x17}) // maxUserIds
+	buf.Write([]byte{0x02, 0x02, 0xFF, 0xFF}) // maxTokenIds
+	buf.Write([]byte{0x02, 0x01, 0x01})       // numPriorities
+	buf.Write([]byte{0x02, 0x01, 0x00})       // minThroughput
+	buf.Write([]byte{0x02, 0x01, 0x01})       // maxHeight
+	buf.Write([]byte{0x02, 0x02, 0xFF, 0xFF}) // maxMCSPDUsize
+	buf.Write([]byte{0x02, 0x01, 0x02})       // protocolVersion
+	userData := buildRDPUserData(negotiatedProtocol)
+	buf.WriteByte(0x04)
 	berEncodeLength(buf, len(userData))
 	buf.Write(userData)
-
-	// Now go back and write the total length
 	data := buf.Bytes()
-	totalLength := len(data) - 4 // Exclude tag and length fields
-	binary.BigEndian.PutUint16(data[lengthPos:], uint16(totalLength))
-
+	totalLength := len(data) - 4
+	data[lengthPos+1] = byte(totalLength >> 8)
+	data[lengthPos+2] = byte(totalLength & 0xFF)
 	return data, nil
 }
 
 // buildRDPUserData creates the RDP-specific user data for MCS Connect Initial
-func buildRDPUserData() []byte {
+func buildRDPUserData(negotiatedProtocol uint32) []byte {
+	// Build client data blocks first
+	csCore := buildCSCore(negotiatedProtocol)
+	csSecurity := buildCSSecurity()
+
+	// Build the GCC Conference Create Request
 	buf := new(bytes.Buffer)
 
-	// CS_CORE (MS-RDPBCGR section 2.2.1.3.2)
-	csCore := buildCSCore()
-	buf.Write(csCore)
+	// T.124 identifier string
+	buf.Write([]byte{0x00, 0x05, 0x00, 0x14, 0x7C, 0x00, 0x01})
 
-	// CS_SECURITY (MS-RDPBCGR section 2.2.1.3.3)
-	csSecurity := buildCSSecurity()
-	buf.Write(csSecurity)
+	// ConnectData::connectPDU length (PER encoded)
+	// This is the length from here to the end
+	connectPDUData := new(bytes.Buffer)
 
-	// CS_NET (MS-RDPBCGR section 2.2.1.3.4)
-	// Skipping for minimal implementation
+	// T.124 ConnectData structure
+	connectPDUData.Write([]byte{0x2A, 0x14, 0x76, 0x0A}) // t124Identifier
+	connectPDUData.WriteByte(0x01)                       // connectID (PER: minimum value 0 + 1 = 1)
+	connectPDUData.WriteByte(0x01)                       // must be 1
+	connectPDUData.WriteByte(0x00)                       // OPTIONAL userData is present
+
+	// H.221 nonStandardIdentifier "McDn"
+	connectPDUData.WriteByte(0x01) // h221NonStandard
+	connectPDUData.WriteByte(0xC0) // length = 4 bytes
+	connectPDUData.WriteByte(0x00) // t35CountryCode
+	connectPDUData.WriteByte(0x4D) // t35Extension 'M'
+	connectPDUData.WriteByte(0x63) // manufacturerCode 'c'
+	connectPDUData.WriteByte(0x44) // 'D'
+	connectPDUData.WriteByte(0x6E) // 'n'
+
+	// Client data length
+	clientDataLen := len(csCore) + len(csSecurity)
+	binary.Write(connectPDUData, binary.BigEndian, uint16(clientDataLen))
+
+	// Write client data blocks
+	connectPDUData.Write(csCore)
+	connectPDUData.Write(csSecurity)
+
+	// Write the length of connectPDU
+	connectPDUBytes := connectPDUData.Bytes()
+	if len(connectPDUBytes) < 128 {
+		buf.WriteByte(byte(len(connectPDUBytes)))
+	} else {
+		buf.WriteByte(0x81) // length > 127, use long form
+		buf.WriteByte(byte(len(connectPDUBytes)))
+	}
+	buf.Write(connectPDUBytes)
 
 	return buf.Bytes()
 }
 
-// buildCSCore creates the Client Core Data structure
-// @TODO this is a mess.
-// i am no fan either
-// consts are great. 0x00080001, 0xCA00.. not so much.
-func buildCSCore() []byte {
+// buildCSCore creates the Client Core Data structure, requesting 24-bit color.
+func buildCSCore(negotiatedProtocol uint32) []byte {
 	buf := new(bytes.Buffer)
-
-	// Header
-	binary.Write(buf, binary.LittleEndian, uint16(0x01C0)) // type: CS_CORE
-	binary.Write(buf, binary.LittleEndian, uint16(216))    // length
-
-	// Version - RDP 5.0
+	binary.Write(buf, binary.LittleEndian, uint16(0x01C0))     // type: CS_CORE
+	binary.Write(buf, binary.LittleEndian, uint16(216))        // length
 	binary.Write(buf, binary.LittleEndian, uint32(0x00080001)) // RDP 5.0
-
-	// Desktop size
-	binary.Write(buf, binary.LittleEndian, uint16(1024)) // width
-	binary.Write(buf, binary.LittleEndian, uint16(768))  // height
-
-	// Color depth - Request high color (15-bit)
-	binary.Write(buf, binary.LittleEndian, uint16(0xCA00)) // 15 bpp
-
-	// SAS Sequence
-	binary.Write(buf, binary.LittleEndian, uint16(0xAA03)) // RNS_UD_SAS_DEL
-
-	// Keyboard layout
-	binary.Write(buf, binary.LittleEndian, uint32(0x409)) // US English
-
-	// Client build
-	binary.Write(buf, binary.LittleEndian, uint32(2600)) // NT.5 first XP; 7601=Windows 7(sp1)
-
-	// Client name (32 Unicode characters, null-padded)
-	clientName := "x-stp\\MCS_W00T"
+	binary.Write(buf, binary.LittleEndian, uint16(1024))       // width
+	binary.Write(buf, binary.LittleEndian, uint16(768))        // height
+	binary.Write(buf, binary.LittleEndian, uint16(0xCA01))
+	binary.Write(buf, binary.LittleEndian, uint16(0xAA03)) // SAS Sequence
+	binary.Write(buf, binary.LittleEndian, uint32(0x409))  // US English Keyboard
+	binary.Write(buf, binary.LittleEndian, uint32(7601))   // Client Build (Windows 7 SP1)
+	clientName := "rdp-go"
 	for i := 0; i < 32; i++ {
 		if i < len(clientName) {
 			buf.WriteByte(clientName[i])
-			buf.WriteByte(0) // Unicode null byte
+			buf.WriteByte(0)
 		} else {
 			binary.Write(buf, binary.LittleEndian, uint16(0))
 		}
 	}
-
-	// Keyboard type, subtype, function keys
-	binary.Write(buf, binary.LittleEndian, uint32(0x04)) // IBM enhanced (101/102 keys)
-	binary.Write(buf, binary.LittleEndian, uint32(0))    // Subtype
-	binary.Write(buf, binary.LittleEndian, uint32(12))   // Function keys
-
-	// IME file name (64 bytes, zeros)
-	buf.Write(make([]byte, 64))
-
-	// Post Beta2 color depth - high color
-	binary.Write(buf, binary.LittleEndian, uint16(0x0010)) // 16 bpp
-
-	// Client product ID
-	binary.Write(buf, binary.LittleEndian, uint16(1))
-
-	// Serial number
+	binary.Write(buf, binary.LittleEndian, uint32(0x04))
 	binary.Write(buf, binary.LittleEndian, uint32(0))
-
-	// High color depth - 16 bpp
-	binary.Write(buf, binary.LittleEndian, uint16(0x0010)) // 16 bpp
-
-	// Supported color depths - 15 and 16 bpp
-	binary.Write(buf, binary.LittleEndian, uint16(0x0001)) // 15 bpp supported
-
-	// Early capability flags
-	binary.Write(buf, binary.LittleEndian, uint16(0x0001)) // RNS_UD_CS_SUPPORT_ERRINFO_PDU
-
-	// Client dig product ID (64 bytes, zeros)
+	binary.Write(buf, binary.LittleEndian, uint32(12))
 	buf.Write(make([]byte, 64))
-
-	// Connection type
-	buf.WriteByte(0) // Unknown connection
-
-	// Pad
+	binary.Write(buf, binary.LittleEndian, uint16(16)) // postBeta2ColorDepth (16-bit like scrying)
+	binary.Write(buf, binary.LittleEndian, uint16(1))
+	binary.Write(buf, binary.LittleEndian, uint32(0))
+	binary.Write(buf, binary.LittleEndian, uint16(16)) // highColorDepth (16-bit)
+	binary.Write(buf, binary.LittleEndian, uint16(1))
+	binary.Write(buf, binary.LittleEndian, uint16(1))
+	buf.Write(make([]byte, 64))
+	buf.WriteByte(0x07) // Connection Type
 	buf.WriteByte(0)
-
-	// Server selected protocol
-	binary.Write(buf, binary.LittleEndian, uint32(0)) // Standard RDP
-
+	binary.Write(buf, binary.LittleEndian, negotiatedProtocol)
 	return buf.Bytes()
 }
 
 // buildCSSecurity creates the Client Security Data structure
 func buildCSSecurity() []byte {
 	buf := new(bytes.Buffer)
-
-	// Header
-	binary.Write(buf, binary.LittleEndian, uint16(0x02C0)) // type: CS_SECURITY
-	binary.Write(buf, binary.LittleEndian, uint16(12))     // length
-
-	// Encryption methods
-	binary.Write(buf, binary.LittleEndian, uint32(0)) // No encryption for simplicity
-
-	// Ext encryption methods
-	binary.Write(buf, binary.LittleEndian, uint32(0))
-
+	binary.Write(buf, binary.LittleEndian, uint16(0x02C0))
+	binary.Write(buf, binary.LittleEndian, uint16(12))
+	// Support all encryption methods including NONE for servers that allow guest access
+	binary.Write(buf, binary.LittleEndian, uint32(
+		ENCRYPTION_METHOD_NONE|ENCRYPTION_METHOD_40BIT|ENCRYPTION_METHOD_56BIT|ENCRYPTION_METHOD_128BIT|ENCRYPTION_METHOD_FIPS))
+	binary.Write(buf, binary.LittleEndian, uint32(0)) // extEncryptionMethods
 	return buf.Bytes()
 }
 
-// MCS Domain PDU builders
+// buildCSCluster creates the Client Cluster Data structure
+func buildCSCluster() []byte {
+	buf := new(bytes.Buffer)
+	binary.Write(buf, binary.LittleEndian, uint16(0x04C0)) // type: CS_CLUSTER
+	binary.Write(buf, binary.LittleEndian, uint16(12))     // length
+	binary.Write(buf, binary.LittleEndian, uint32(0x0D))   // flags: console session, supported, version 3
+	binary.Write(buf, binary.LittleEndian, uint32(0))      // redirectedSessionID
+	return buf.Bytes()
+}
+
+// buildCSNet creates the Client Network Data structure
+func buildCSNet() []byte {
+	buf := new(bytes.Buffer)
+	binary.Write(buf, binary.LittleEndian, uint16(0x03C0)) // type: CS_NET
+	binary.Write(buf, binary.LittleEndian, uint16(8))      // length (header + count)
+	binary.Write(buf, binary.LittleEndian, uint32(0))      // channelCount = 0 (no custom channels)
+	return buf.Bytes()
+}
 
 // buildMCSErectDomainRequest creates an MCS Erect Domain Request PDU
 func buildMCSErectDomainRequest() []byte {
-	// ErectDomainRequest ::= [APPLICATION 4] IMPLICIT SEQUENCE {
-	//     subHeight   INTEGER (0..MAX),
-	//     subInterval INTEGER (0..MAX)
-	// }
-	buf := new(bytes.Buffer)
-
-	// Application tag 4
-	buf.WriteByte(0x04)
-
-	// Length (4 bytes for two integers)
-	buf.WriteByte(0x04)
-
-	// subHeight (0)
-	buf.WriteByte(0x00)
-	buf.WriteByte(0x00)
-
-	// subInterval (0)
-	buf.WriteByte(0x00)
-	buf.WriteByte(0x00)
-
-	return buf.Bytes()
+	return []byte{0x04, 0x04, 0x00, 0x00, 0x00, 0x00}
 }
 
-// buildMCSAttachUserRequest creates an MCS Attach User Request PDU
+// buildMCSAttachUserRequest creates a validly-encoded MCS Attach User Request PDU.
 func buildMCSAttachUserRequest() []byte {
-	// AttachUserRequest ::= [APPLICATION 10] IMPLICIT SEQUENCE {}
-	// Empty sequence
-	return []byte{0x10, 0x00} // Tag 10, length 0
+	// A minimal PER encoding for an empty sequence. Some servers (like xrdp)
+	// expect the hyper-compact version without an explicit length byte.
+	return []byte{0x28}
 }
 
 // buildMCSChannelJoinRequest creates an MCS Channel Join Request PDU
 func buildMCSChannelJoinRequest(userID, channelID uint16) []byte {
-	// ChannelJoinRequest ::= [APPLICATION 14] IMPLICIT SEQUENCE {
-	//     initiator   UserId,
-	//     channelId   ChannelId
-	// }
 	buf := new(bytes.Buffer)
-
-	// Application tag 14
-	buf.WriteByte(0x14)
-
-	// Length (4 bytes for two 16-bit integers)
-	buf.WriteByte(0x04)
-
-	// initiator (user ID)
+	buf.WriteByte(0x38) // PER tag for [APPLICATION 14]
 	binary.Write(buf, binary.BigEndian, userID)
-
-	// channelId
 	binary.Write(buf, binary.BigEndian, channelID)
-
 	return buf.Bytes()
 }
 
-// MCS Disconnect reasons
-const (
-	MCS_REASON_DOMAIN_DISCONNECTED = 0x00
-	MCS_REASON_PROVIDER_INITIATED  = 0x01
-	MCS_REASON_TOKEN_PURGED        = 0x02
-	MCS_REASON_USER_REQUESTED      = 0x03
-	MCS_REASON_CHANNEL_PURGED      = 0x04
-)
-
-// mcsDisconnectReason returns a human-readable disconnect reason
-func mcsDisconnectReason(reason uint8) string {
-	// Standard MCS reasons
-	switch reason {
-	case MCS_REASON_DOMAIN_DISCONNECTED:
-		return "Domain disconnected"
-	case MCS_REASON_PROVIDER_INITIATED:
-		return "Provider initiated disconnect"
-	case MCS_REASON_TOKEN_PURGED:
-		return "Token purged"
-	case MCS_REASON_USER_REQUESTED:
-		return "User requested"
-	case MCS_REASON_CHANNEL_PURGED:
-		return "Channel purged"
-	}
-
-	// RDP-specific reasons (non-standard)
-	switch reason {
-	case 0x80:
-		return "RDP protocol error - likely security negotiation failure"
-	case 0x81:
-		return "Server refused connection - check security settings"
-	case 0x82:
-		return "Server configuration error"
-	default:
-		return fmt.Sprintf("Unknown reason (0x%02X)", reason)
-	}
-}
-
-// parseMCSConnectResponse parses an MCS Connect Response PDU
+// parseMCSConnectResponse parses the MCS Connect Response to find the user data.
 func parseMCSConnectResponse(data []byte) (*SecurityData, error) {
-	if len(data) < 2 {
-		return nil, fmt.Errorf("MCS PDU too short: %d bytes", len(data))
+	if len(data) < 2 || data[0] != 0x7f || data[1] != 0x66 {
+		return nil, fmt.Errorf("invalid MCS Connect Response tag")
 	}
-
-	// Debug output
-	fmt.Printf("MCS PDU data: %x\n", data)
-
-	// Check for various MCS PDU types
-	tag := data[0]
-
-	switch tag {
-	case 0x7F:
-		// BER tag 0x7F66 (Connect-Response)
-		if len(data) < 3 || data[1] != 0x66 {
-			return nil, fmt.Errorf("invalid MCS Connect Response tag: %02X%02X", data[0], data[1])
-		}
-
-		// Parse the MCS Connect Response to extract server security data
-		securityData, err := parseMCSConnectResponseData(data)
-		if err != nil {
-			return nil, err
-		}
-		return securityData, nil
-
-	case 0x21:
-		// Disconnect Provider Ultimatum (0x21)
-		if len(data) < 2 {
-			return nil, fmt.Errorf("Disconnect Provider Ultimatum too short")
-		}
-		reason := data[1]
-
-		fmt.Printf("\n[:(] - MSC let you down. \n")
-		fmt.Printf("Disconnect reason: %s\n", mcsDisconnectReason(reason))
-
-		if reason == 0x80 {
-			fmt.Println("\nThis typically means:")
-			fmt.Println("- The server requires TLS/SSL or NLA but we sent standard RDP")
-			fmt.Println("- The server does not agree with initialized MCS conn params")
-			fmt.Println("- The server thinks we're alien droids")
-			fmt.Println("\nTo connect to this server, you would need to:")
-			fmt.Println("1. Implement TLS support if the server requires SSL")
-			fmt.Println("2. Implement CredSSP/NLA if the server requires it")
-			fmt.Println("3. Ensure the RDP security settings match the server's requirements")
-		}
-
-		return nil, fmt.Errorf("MCS Disconnect: %s", mcsDisconnectReason(reason))
-
-	default:
-		return nil, fmt.Errorf("unexpected MCS PDU type: 0x%02X", tag)
+	r := bytes.NewReader(data[2:])
+	length, err := readBERLength(r)
+	if err != nil {
+		return nil, err
 	}
+	if r.Len() < length {
+		return nil, fmt.Errorf("length mismatch in MCS connect response")
+	}
+	return parseGCCConferenceCreateResponse(data[len(data)-length:])
 }
 
-// parseMCSConnectResponseData extracts server security data from MCS Connect Response
-func parseMCSConnectResponseData(data []byte) (*SecurityData, error) {
-	// Skip BER header and length encoding
-	offset := 2
-
-	// Read length
-	if data[offset] == 0x82 {
-		// 2-byte length
-		offset += 3
-	} else if data[offset] == 0x81 {
-		// 1-byte length
-		offset += 2
-	} else {
-		// Short form
-		offset += 1
-	}
-
-	// Skipping result, calledConnectId, and domainParameters for mvp.
-
-	// For full ASN.1 (ITU-T X.680) and BER encoding (X.690) as used in the Microsoft RDP stack;
-	// read the following:
-	//  - CredSSP (MS-CSSP), RDP core (MS-RDPBCGR), licensing (MS-RDPELE), smart card (MS-RDPEFS).
-	// TSRequest type: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-cssp/6aac4dea-08ef-47a6-8747-22ea7f6d8685
-	//  zmap/zcrypto's ASN.1 is best afaik in go atm.
-	// For anyone maintaining this after me: yes, it's BER, yes, it's ASN.1, yes, it's weird.
-
-	// Look for the user data (OCTET STRING)
-	for offset < len(data)-2 {
-		if data[offset] == 0x04 { // OCTET STRING tag
-			offset++
-
-			// Read length
-			var userDataLen int
-			if data[offset] == 0x82 {
-				userDataLen = int(binary.BigEndian.Uint16(data[offset+1:]))
-				offset += 3
-			} else if data[offset] == 0x81 {
-				userDataLen = int(data[offset+1])
-				offset += 2
-			} else {
-				userDataLen = int(data[offset])
-				offset += 1
-			}
-
-			// Parse GCC Conference Create Response
-			if offset+userDataLen <= len(data) {
-				return parseGCCConferenceCreateResponse(data[offset : offset+userDataLen])
-			}
-		}
-		offset++
-	}
-
-	return nil, fmt.Errorf("user data not found in MCS Connect Response")
-}
-
-// parseGCCConferenceCreateResponse parses the GCC Conference Create Response
+// parseGCCConferenceCreateResponse finds and parses the security block from the GCC response.
 func parseGCCConferenceCreateResponse(data []byte) (*SecurityData, error) {
+	offset := -1
+	for i := 0; i < len(data)-4; i++ {
+		if binary.LittleEndian.Uint16(data[i:]) == 0x0C01 {
+			offset = i
+			break
+		}
+	}
+	if offset == -1 {
+		return nil, fmt.Errorf("could not find server core data block in GCC response")
+	}
+
+	r := bytes.NewReader(data[offset:])
 	securityData := &SecurityData{}
 
-	// Skip GCC header (simplified)
-	offset := 21 // Typical offset to server data
+	for r.Len() >= 4 {
+		var headerType, length uint16
+		binary.Read(r, binary.LittleEndian, &headerType)
+		binary.Read(r, binary.LittleEndian, &length)
 
-	// Parse server data blocks
-	for offset < len(data)-4 {
-		// Read header type and length
-		headerType := binary.LittleEndian.Uint16(data[offset:])
-		length := binary.LittleEndian.Uint16(data[offset+2:])
-
-		if offset+int(length) > len(data) {
+		if r.Len() < int(length-4) {
 			break
 		}
 
-		switch headerType {
-		case 0x0C02: // SC_SECURITY
-			// Parse security data
-			if length >= 12 {
-				securityData.EncryptionMethod = binary.LittleEndian.Uint32(data[offset+4:])
-				securityData.EncryptionLevel = binary.LittleEndian.Uint32(data[offset+8:])
+		blockData := make([]byte, length-4)
+		r.Read(blockData)
 
-				if length > 12 {
-					// Server random follows
-					randomLen := binary.LittleEndian.Uint32(data[offset+12:])
-					if randomLen == 32 && int(length) >= 16+int(randomLen) {
-						securityData.ServerRandom = make([]byte, 32)
-						copy(securityData.ServerRandom, data[offset+16:offset+16+32])
-					}
-
-					// Certificate may follow
-					if int(length) > 16+int(randomLen) {
-						certOffset := offset + 16 + int(randomLen)
-						certLen := binary.LittleEndian.Uint32(data[certOffset:])
-						if certLen > 0 && int(certLen) <= len(data)-certOffset-4 {
-							securityData.ServerCertificate = make([]byte, certLen)
-							copy(securityData.ServerCertificate, data[certOffset+4:])
-						}
-					}
-				}
-
+		if headerType == 0x0C02 { // SC_SECURITY
+			if len(blockData) >= 8 {
+				securityData.EncryptionMethod = binary.LittleEndian.Uint32(blockData[0:])
+				securityData.EncryptionLevel = binary.LittleEndian.Uint32(blockData[4:])
 				fmt.Printf("Server Security: Method=0x%08X, Level=0x%08X\n",
 					securityData.EncryptionMethod, securityData.EncryptionLevel)
+
+				if len(blockData) > 8 {
+					serverRandomLen := binary.LittleEndian.Uint32(blockData[8:])
+					serverCertLen := binary.LittleEndian.Uint32(blockData[12:])
+					if serverCertLen > 0 && 16+serverRandomLen+serverCertLen <= uint32(len(blockData)) {
+						certData := blockData[16+serverRandomLen:]
+						key, err := parseServerCertificate(certData)
+						if err != nil {
+							fmt.Printf("Warning: Failed to parse server certificate: %v\n", err)
+						} else {
+							securityData.ServerPublicKey = key
+						}
+					}
+					if serverRandomLen > 0 && 16+serverRandomLen <= uint32(len(blockData)) {
+						securityData.ServerRandom = blockData[16 : 16+serverRandomLen]
+					}
+				}
 			}
 		}
-
-		offset += int(length)
 	}
-
 	return securityData, nil
 }
 
-// parseMCSAttachUserConfirm parses an MCS Attach User Confirm PDU
-func parseMCSAttachUserConfirm(data []byte) (uint16, error) {
-	if len(data) < 5 {
-		return 0, fmt.Errorf("MCS Attach User Confirm too short: %d bytes", len(data))
+// parseServerCertificate first tries to parse a standard X.509 certificate,
+// and falls back to a proprietary RDP certificate parser if that fails.
+func parseServerCertificate(data []byte) (*rsa.PublicKey, error) {
+	cert, err := x509.ParseCertificate(data)
+	if err == nil {
+		if rsaKey, ok := cert.PublicKey.(*rsa.PublicKey); ok {
+			fmt.Println("Successfully parsed X.509 certificate.")
+			return rsaKey, nil
+		}
+		return nil, fmt.Errorf("certificate public key is not RSA")
 	}
 
-	// Debug output
-	fmt.Printf("MCS Attach User Confirm data: %x\n", data[:min(16, len(data))])
-
-	// Check for tag 0x11 (Attach-User-Confirm)
-	if data[0] != 0x11 {
-		return 0, fmt.Errorf("invalid MCS Attach User Confirm tag: %02X", data[0])
+	fmt.Printf("Not a valid X.509 certificate, trying proprietary parser: %v\n", err)
+	rsaKey, err := parseProprietaryServerCertificate(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse both X.509 and proprietary certificates: %w", err)
 	}
 
-	// Skip length byte
-	// Result should be 0 (rt-successful)
-	if data[2] != 0 {
-		return 0, fmt.Errorf("MCS Attach User failed with result: %02X", data[2])
-	}
-
-	// Extract user ID (big-endian)
-	userID := binary.BigEndian.Uint16(data[3:5])
-	return userID, nil
+	fmt.Println("Successfully parsed proprietary certificate.")
+	return rsaKey, nil
 }
 
-// parseMCSChannelJoinConfirm parses an MCS Channel Join Confirm PDU
+// parseProprietaryServerCertificate parses the non-X509 cert format.
+func parseProprietaryServerCertificate(data []byte) (*rsa.PublicKey, error) {
+	r := bytes.NewReader(data)
+	var magic, keylen, bitlen, datalen, pubExp uint32
+
+	// Proprietary certs can be wrapped. Find the RSA1 magic number.
+	offset := -1
+	for i := 0; i < r.Len()-4; i++ {
+		if binary.LittleEndian.Uint32(data[i:]) == 0x31415352 { // "RSA1"
+			offset = i
+			break
+		}
+	}
+	if offset == -1 {
+		return nil, fmt.Errorf("could not find RSA1 magic in proprietary certificate")
+	}
+	r.Seek(int64(offset), io.SeekStart)
+
+	binary.Read(r, binary.LittleEndian, &magic)
+	binary.Read(r, binary.LittleEndian, &keylen)
+	binary.Read(r, binary.LittleEndian, &bitlen)
+	binary.Read(r, binary.LittleEndian, &datalen)
+	binary.Read(r, binary.LittleEndian, &pubExp)
+
+	// Per MS-RDPBCGR 2.2.1.4.3.1.1.1, datalen is the length of the modulus.
+	if r.Len() < int(datalen) {
+		return nil, fmt.Errorf("not enough data for modulus")
+	}
+	modulusBytes := make([]byte, datalen)
+	if _, err := io.ReadFull(r, modulusBytes); err != nil {
+		return nil, err
+	}
+
+	// Modulus is little-endian, reverse for big.Int
+	for i, j := 0, len(modulusBytes)-1; i < j; i, j = i+1, j-1 {
+		modulusBytes[i], modulusBytes[j] = modulusBytes[j], modulusBytes[i]
+	}
+	return &rsa.PublicKey{
+		N: new(big.Int).SetBytes(modulusBytes),
+		E: int(pubExp),
+	}, nil
+}
+
+// readBERLength is a helper to read a BER-encoded length
+func readBERLength(r *bytes.Reader) (int, error) {
+	lenByte, err := r.ReadByte()
+	if err != nil {
+		return 0, err
+	}
+	if lenByte&0x80 == 0 {
+		return int(lenByte), nil
+	}
+	lenBytes := int(lenByte & 0x7F)
+	if lenBytes > r.Len() || lenBytes > 2 {
+		return 0, fmt.Errorf("invalid BER length")
+	}
+	buf := make([]byte, lenBytes)
+	r.Read(buf)
+	if lenBytes == 1 {
+		return int(buf[0]), nil
+	}
+	return int(binary.BigEndian.Uint16(buf)), nil
+}
+
+// parseMCSAttachUserConfirm parses the PER-encoded Attach User Confirm PDU.
+func parseMCSAttachUserConfirm(data []byte) (uint16, error) {
+	if len(data) < 2 {
+		return 0, fmt.Errorf("MCS Attach User Confirm PDU too short")
+	}
+	if data[0] != 0 {
+		return 0, fmt.Errorf("attach user failed with result 0x%x", data[0])
+	}
+	// The initiator ID is the user ID we need, offset by 1001 for user channels
+	return binary.BigEndian.Uint16(data[1:]) + 1001, nil
+}
+
+// parseMCSChannelJoinConfirm parses the PER-encoded Channel Join Confirm PDU.
 func parseMCSChannelJoinConfirm(data []byte) error {
-	if len(data) < 5 {
-		return fmt.Errorf("MCS Channel Join Confirm too short: %d bytes", len(data))
+	if len(data) < 4 {
+		return fmt.Errorf("channel join confirm PDU too short")
 	}
-
-	// Debug output
-	fmt.Printf("MCS Channel Join Confirm data: %x\n", data[:min(16, len(data))])
-
-	// Check for tag 0x15 (Channel-Join-Confirm)
-	if data[0] != 0x15 {
-		return fmt.Errorf("invalid MCS Channel Join Confirm tag: %02X", data[0])
+	if data[0] != 0 {
+		return fmt.Errorf("channel join failed with result 0x%x", data[0])
 	}
-
-	// Result should be 0 (rt-successful)
-	if data[2] != 0 {
-		return fmt.Errorf("MCS Channel Join failed with result: %02X", data[2])
-	}
-
 	return nil
 }
