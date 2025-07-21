@@ -8,11 +8,11 @@
 //
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Affero General Public License for more details.
 //
 // You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 package rdp
 
@@ -23,57 +23,39 @@ import (
 	"io"
 )
 
-// X224ConnectionRequest represents an X.224 Connection Request PDU (CR TPDU)
-// as defined in ITU-T X.224 (ISO 8073).
-//
-// Structure:
-//   - Length Indicator (1 byte): Length of header excluding LI field
-//   - TPDU Code (1 byte): 0xE0 for Connection Request
-//   - DST-REF (2 bytes): Destination reference (0 for CR)
-//   - SRC-REF (2 bytes): Source reference (arbitrary)
-//   - Class/Options (1 byte): Protocol class and options
-//   - Variable Part: Optional parameters (e.g., RDP cookie)
+// X224ConnectionRequest represents an X.224 Connection Request PDU
 type X224ConnectionRequest struct {
 	LengthIndicator uint8
 	TPDUCode        uint8
 	DstRef          uint16
 	SrcRef          uint16
 	ClassOptions    uint8
-	Cookie          []byte // Optional RDP negotiation cookie
+	Cookie          []byte
 }
 
-// NewX224ConnectionRequest creates a new X.224 Connection Request PDU.
-// The cookie parameter is optional and can be empty for basic connections.
+// NewX224ConnectionRequest creates a new X.224 Connection Request.
+// It no longer advertises NLA (PROTOCOL_HYBRID) to be more compatible with non-NLA servers.
 func NewX224ConnectionRequest(cookie string) *X224ConnectionRequest {
 	cr := &X224ConnectionRequest{
-		TPDUCode:     X224_TPDU_CONNECTION_REQUEST,
-		DstRef:       0,      // Always 0 for CR
-		SrcRef:       0x1234, // Arbitrary source reference
-		ClassOptions: 0,      // Class 0, no options
+		TPDUCode:     0xE0, // CR - Connection Request
+		DstRef:       0,
+		SrcRef:       0x1234,
+		ClassOptions: 0,
 	}
 
-	// Add RDP negotiation request to probe server capabilities
 	negReq := RDPNegReq{
 		Type:      TYPE_RDP_NEG_REQ,
 		Flags:     0,
 		Length:    8,
-		Protocols: PROTOCOL_SSL | PROTOCOL_HYBRID, // Request both SSL and NLA
+		Protocols: PROTOCOL_RDP | PROTOCOL_SSL, // Request Standard RDP and TLS-based RDP
 	}
 
-	// Build cookie with negotiation
 	var cookieData bytes.Buffer
-
-	// Add cookie if provided
 	if cookie != "" {
 		cookieData.WriteString(fmt.Sprintf("Cookie: mstshash=%s\r\n", cookie))
 	}
-
-	// Add negotiation request
 	binary.Write(&cookieData, binary.LittleEndian, negReq)
-
 	cr.Cookie = cookieData.Bytes()
-
-	// Calculate length indicator (header size minus LI field itself)
 	cr.LengthIndicator = uint8(6 + len(cr.Cookie))
 
 	return cr

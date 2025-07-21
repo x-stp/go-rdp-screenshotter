@@ -8,11 +8,11 @@
 //
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU Affero General Public License for more details.
 //
 // You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 package rdp
 
@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"io"
 )
 
 // Licensing PDU types (MS-RDPELE)
@@ -35,17 +34,19 @@ const (
 	ERROR_ALERT                 = 0xFF
 )
 
-// License error codes
+// License error codes and states
 const (
 	ERR_INVALID_SERVER_CERTIFICATE = 0x00000001
 	ERR_NO_LICENSE                 = 0x00000002
 	ERR_INVALID_SCOPE              = 0x00000004
 	ERR_NO_LICENSE_SERVER          = 0x00000006
-	STATUS_VALID_CLIENT            = 0x00000007
+	ST_NO_TRANSITION               = 0x00000001
 	ERR_INVALID_CLIENT             = 0x00000008
 	ERR_INVALID_PRODUCTID          = 0x0000000B
 	ERR_INVALID_MESSAGE_LEN        = 0x0000000C
 	ERR_INVALID_MAC                = 0x00000003
+	STATUS_VALID_CLIENT            = 0x00000007
+	ST_TOTAL_ABORT                 = 0x00000002
 )
 
 // LicensingPDU represents a licensing PDU header
@@ -56,7 +57,8 @@ type LicensingPDU struct {
 	Size           uint16
 }
 
-// handleLicensingPDU processes licensing PDUs
+// handleLicensingPDU processes licensing PDUs. Note: This is currently dead code as
+// the main workflow uses the simplified handleLicensingPhase in client.go.
 func (c *Client) handleLicensingPDU(data []byte) error {
 	if len(data) < 8 {
 		return fmt.Errorf("licensing PDU too short")
@@ -85,16 +87,13 @@ func (c *Client) handleLicensingPDU(data []byte) error {
 	return nil
 }
 
-// handleLicenseRequest handles a license request from the server
+// handleLicenseRequest handles a license request from the server.
 func (c *Client) handleLicenseRequest(data []byte) error {
 	fmt.Println("Received License Request")
-
-	// For a minimal implementation, we'll send a license error response
-	// indicating we're a valid client (STATUS_VALID_CLIENT)
 	return c.sendLicenseErrorAlert(STATUS_VALID_CLIENT)
 }
 
-// handleLicenseError handles a license error from the server
+// handleLicenseError handles a license error from the server.
 func (c *Client) handleLicenseError(data []byte) error {
 	if len(data) < 8 {
 		return fmt.Errorf("license error PDU too short")
@@ -115,90 +114,19 @@ func (c *Client) handleLicenseError(data []byte) error {
 	return fmt.Errorf("licensing error: 0x%08X", errorCode)
 }
 
-// sendLicenseErrorAlert sends a license error alert PDU
+// sendLicenseErrorAlert sends a license error alert PDU.
 func (c *Client) sendLicenseErrorAlert(errorCode uint32) error {
-	buf := new(bytes.Buffer)
-
-	// Security header (if encryption is enabled)
-	if c.sessionKeys != nil {
-		binary.Write(buf, binary.LittleEndian, uint16(SEC_LICENSE_PKT))
-		binary.Write(buf, binary.LittleEndian, uint16(0)) // flagsHi
-	}
-
-	// Licensing PDU header
+	// This function builds the core license PDU.
 	pduBuf := new(bytes.Buffer)
 	binary.Write(pduBuf, binary.LittleEndian, uint8(ERROR_ALERT))
-	binary.Write(pduBuf, binary.LittleEndian, uint8(0x02)) // flags
-	binary.Write(pduBuf, binary.LittleEndian, uint16(16))  // size
-
-	// Error alert data
+	binary.Write(pduBuf, binary.LittleEndian, uint8(0x03)) // flags (PREAMBLE_VERSION_3_0)
+	binary.Write(pduBuf, binary.LittleEndian, uint16(12))  // size = 4 (header) + 8 (data)
 	binary.Write(pduBuf, binary.LittleEndian, errorCode)
-	binary.Write(pduBuf, binary.LittleEndian, uint32(0x02)) // ST_TOTAL_ABORT
+	binary.Write(pduBuf, binary.LittleEndian, uint32(ST_NO_TRANSITION))
 
-	// Blob header (empty)
-	binary.Write(pduBuf, binary.LittleEndian, uint16(0)) // wBlobType
-	binary.Write(pduBuf, binary.LittleEndian, uint16(0)) // wBlobLen
+	// Wrap the core PDU with security headers and encryption.
+	wrappedPDU := c.secureWrap(SEC_ENCRYPT|SEC_LICENSE_PKT, pduBuf.Bytes())
 
-	// Encrypt if needed
-	pduData := pduBuf.Bytes()
-	if c.encryptor != nil {
-		c.encryptor.Encrypt(pduData)
-	}
-
-	buf.Write(pduData)
-	return c.sendPDU(buf.Bytes())
-}
-
-// receiveLicensingPDUs receives and processes licensing PDUs
-func (c *Client) receiveLicensingPDUs() error {
-	for {
-		// Read TPKT header
-		tpkt, err := ReadTPKTHeader(c.conn)
-		if err != nil {
-			return fmt.Errorf("failed to read TPKT header: %w", err)
-		}
-
-		// Read the rest of the packet
-		data := make([]byte, tpkt.PayloadSize())
-		if _, err := io.ReadFull(c.conn, data); err != nil {
-			return fmt.Errorf("failed to read PDU data: %w", err)
-		}
-
-		// Skip X.224 Data header (3 bytes)
-		if len(data) < 3 {
-			continue
-		}
-		data = data[3:]
-
-		// Check for security header
-		if len(data) < 4 {
-			continue
-		}
-
-		flags := binary.LittleEndian.Uint16(data[0:2])
-
-		// Check if it's a licensing PDU
-		if flags&SEC_LICENSE_PKT != 0 {
-			// Handle licensing PDU
-			if err := c.handleLicensingPDU(data); err != nil {
-				return err
-			}
-
-			// Check if we received STATUS_VALID_CLIENT
-			if len(data) >= 12 {
-				pduType := data[4]
-				if pduType == ERROR_ALERT {
-					errorCode := binary.LittleEndian.Uint32(data[8:12])
-					if errorCode == STATUS_VALID_CLIENT {
-						fmt.Println("Licensing phase completed")
-						return nil
-					}
-				}
-			}
-		} else {
-			// Not a licensing PDU, we're done with licensing
-			fmt.Println("Non-licensing PDU received, licensing phase complete")
-			return nil
-		}
-	}
+	// Send the final wrapped PDU.
+	return c.sendPDU(wrappedPDU)
 }

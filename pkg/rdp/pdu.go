@@ -85,6 +85,24 @@ type FontListPDU struct {
 	EntrySize     uint16
 }
 
+// Input event message types
+const (
+	INPUT_EVENT_SYNC     = 0x0000
+	INPUT_EVENT_SCANCODE = 0x0004
+	INPUT_EVENT_UNICODE  = 0x0005
+	INPUT_EVENT_MOUSE    = 0x8001
+	INPUT_EVENT_MOUSEX   = 0x8002
+)
+
+// Mouse event flags
+const (
+	PTRFLAGS_MOVE    = 0x0800
+	PTRFLAGS_DOWN    = 0x8000
+	PTRFLAGS_BUTTON1 = 0x1000
+	PTRFLAGS_BUTTON2 = 0x2000
+	PTRFLAGS_BUTTON3 = 0x4000
+)
+
 // buildSynchronizePDU creates a Client Synchronize PDU
 func buildSynchronizePDU(targetUser uint16) []byte {
 	buf := new(bytes.Buffer)
@@ -191,7 +209,7 @@ type BitmapUpdateData struct {
 // parseBitmapUpdateData parses bitmap update data
 func parseBitmapUpdateData(data []byte) (*BitmapUpdateData, error) {
 	if len(data) < 4 {
-		return nil, fmt.Errorf("bitmap update data too short")
+		return nil, fmt.Errorf("bitmap update data too short: %d bytes", len(data))
 	}
 
 	update := &BitmapUpdateData{}
@@ -201,10 +219,17 @@ func parseBitmapUpdateData(data []byte) (*BitmapUpdateData, error) {
 	binary.Read(r, binary.LittleEndian, &update.UpdateType)
 	binary.Read(r, binary.LittleEndian, &update.NumberRectangles)
 
+	fmt.Printf("Bitmap update: type=0x%04X, rectangles=%d\n", update.UpdateType, update.NumberRectangles)
+
 	// Read rectangles
 	update.Rectangles = make([]BitmapData, update.NumberRectangles)
 	for i := uint16(0); i < update.NumberRectangles; i++ {
 		rect := &update.Rectangles[i]
+
+		// Check if we have enough data for the header
+		if r.Len() < 18 {
+			return nil, fmt.Errorf("insufficient data for rectangle %d header", i)
+		}
 
 		// Read bitmap header
 		binary.Read(r, binary.LittleEndian, &rect.DestLeft)
@@ -217,16 +242,127 @@ func parseBitmapUpdateData(data []byte) (*BitmapUpdateData, error) {
 		binary.Read(r, binary.LittleEndian, &rect.Flags)
 		binary.Read(r, binary.LittleEndian, &rect.BitmapLength)
 
+		// Check for compressed bitmap
+		if rect.Flags&0x0001 != 0 {
+			fmt.Printf("  Rectangle %d: compressed bitmap detected (not supported yet)\n", i)
+		}
+
 		// Read bitmap data
 		if rect.BitmapLength > 0 {
+			if r.Len() < int(rect.BitmapLength) {
+				return nil, fmt.Errorf("insufficient data for rectangle %d bitmap: need %d, have %d",
+					i, rect.BitmapLength, r.Len())
+			}
 			rect.BitmapDataStream = make([]byte, rect.BitmapLength)
 			r.Read(rect.BitmapDataStream)
 		}
 
-		fmt.Printf("  Bitmap rectangle %d: (%d,%d)-(%d,%d), %dx%d, %d bpp, %d bytes\n",
+		fmt.Printf("  Rectangle %d: (%d,%d)-(%d,%d), %dx%d, %d bpp, %d bytes\n",
 			i, rect.DestLeft, rect.DestTop, rect.DestRight, rect.DestBottom,
 			rect.Width, rect.Height, rect.BitsPerPixel, rect.BitmapLength)
 	}
 
 	return update, nil
+}
+
+// buildRefreshRectPDU creates a Refresh Rectangle PDU to request screen updates
+func buildRefreshRectPDU(left, top, right, bottom uint16) []byte {
+	buf := new(bytes.Buffer)
+
+	// Number of areas (1)
+	binary.Write(buf, binary.LittleEndian, uint8(1))
+	// Pad3Octets
+	binary.Write(buf, binary.LittleEndian, uint8(0))
+	binary.Write(buf, binary.LittleEndian, uint16(0))
+
+	// Inclusive Rectangle
+	binary.Write(buf, binary.LittleEndian, left)
+	binary.Write(buf, binary.LittleEndian, top)
+	binary.Write(buf, binary.LittleEndian, right)
+	binary.Write(buf, binary.LittleEndian, bottom)
+
+	return wrapInShareDataPDU(buf.Bytes(), PDUTYPE2_REFRESH_RECT, 0)
+}
+
+// buildSuppressOutputPDU creates a Suppress Output PDU
+func buildSuppressOutputPDU(allowDisplayUpdates bool) []byte {
+	buf := new(bytes.Buffer)
+
+	if allowDisplayUpdates {
+		binary.Write(buf, binary.LittleEndian, uint8(0)) // ALLOW_DISPLAY_UPDATES
+		binary.Write(buf, binary.LittleEndian, uint8(0)) // Pad3Octets
+		binary.Write(buf, binary.LittleEndian, uint16(0))
+		// Desktop rect
+		binary.Write(buf, binary.LittleEndian, uint16(0))    // left
+		binary.Write(buf, binary.LittleEndian, uint16(0))    // top
+		binary.Write(buf, binary.LittleEndian, uint16(1920)) // right
+		binary.Write(buf, binary.LittleEndian, uint16(1080)) // bottom
+	} else {
+		binary.Write(buf, binary.LittleEndian, uint8(1)) // SUPPRESS_DISPLAY_UPDATES
+		binary.Write(buf, binary.LittleEndian, uint8(0)) // Pad3Octets
+		binary.Write(buf, binary.LittleEndian, uint16(0))
+	}
+
+	return wrapInShareDataPDU(buf.Bytes(), PDUTYPE2_SUPPRESS_OUTPUT, 0)
+}
+
+// buildInputEventPDU creates an Input Event PDU
+func buildInputEventPDU(events []InputEvent) []byte {
+	buf := new(bytes.Buffer)
+
+	// Number of events
+	binary.Write(buf, binary.LittleEndian, uint16(len(events)))
+	// Pad
+	binary.Write(buf, binary.LittleEndian, uint16(0))
+
+	// Write events
+	for _, event := range events {
+		event.WriteTo(buf)
+	}
+
+	return wrapInShareDataPDU(buf.Bytes(), PDUTYPE2_INPUT, 0)
+}
+
+// InputEvent represents a single input event
+type InputEvent struct {
+	EventTime   uint32
+	MessageType uint16
+	DeviceFlags uint16
+	Param1      uint16
+	Param2      uint16
+}
+
+// WriteTo writes the input event to a buffer
+func (e *InputEvent) WriteTo(w io.Writer) {
+	binary.Write(w, binary.LittleEndian, e.EventTime)
+	binary.Write(w, binary.LittleEndian, e.MessageType)
+	binary.Write(w, binary.LittleEndian, e.DeviceFlags)
+	binary.Write(w, binary.LittleEndian, e.Param1)
+	binary.Write(w, binary.LittleEndian, e.Param2)
+}
+
+// buildMouseMoveEvent creates a mouse move event
+func buildMouseMoveEvent(x, y uint16) InputEvent {
+	return InputEvent{
+		EventTime:   0,
+		MessageType: INPUT_EVENT_MOUSE,
+		DeviceFlags: PTRFLAGS_MOVE,
+		Param1:      x,
+		Param2:      y,
+	}
+}
+
+// buildMouseClickEvent creates a mouse click event
+func buildMouseClickEvent(x, y uint16, button uint16, down bool) InputEvent {
+	flags := button
+	if down {
+		flags |= PTRFLAGS_DOWN
+	}
+	return InputEvent{
+		EventTime:   0,
+		MessageType: INPUT_EVENT_MOUSE,
+		DeviceFlags: flags,
+		Param1:      x,
+		Param2:      y,
+	}
 }

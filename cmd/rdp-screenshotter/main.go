@@ -23,6 +23,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/x-stp/rdp-screenshotter-go/pkg/rdp"
@@ -33,7 +34,10 @@ func main() {
 		targetFile = flag.String("targets", "target.txt", "File containing RDP targets (one per line)")
 		timeout    = flag.Duration("timeout", 10*time.Second, "Connection timeout")
 		username   = flag.String("username", "", "Username for RDP cookie (optional)")
+		password   = flag.String("password", "", "Password for NLA authentication (optional)")
+		domain     = flag.String("domain", "", "Domain for NLA authentication (optional)")
 		outputDir  = flag.String("output", "screenshots", "Output directory for screenshots")
+		workers    = flag.Int("workers", 5, "Number of concurrent workers")
 	)
 	flag.Parse()
 
@@ -53,22 +57,89 @@ func main() {
 	}
 
 	fmt.Printf("Found %d targets\n", len(targets))
+	fmt.Printf("Using %d concurrent workers\n", *workers)
 
-	// Process each target
+	// Create channels for work distribution
+	targetChan := make(chan targetWork, len(targets))
+	resultChan := make(chan targetResult, len(targets))
+
+	// Create wait group for workers
+	var wg sync.WaitGroup
+
+	// Start workers
+	for i := 0; i < *workers; i++ {
+		wg.Add(1)
+		go worker(i+1, targetChan, resultChan, &wg, *timeout, *username, *password, *domain, *outputDir)
+	}
+
+	// Send work to channel
 	for i, target := range targets {
-		fmt.Printf("\n[%d/%d] Processing %s...\n", i+1, len(targets), target)
+		targetChan <- targetWork{
+			index:  i + 1,
+			total:  len(targets),
+			target: target,
+		}
+	}
+	close(targetChan)
 
+	// Start result collector
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Collect results
+	successCount := 0
+	failCount := 0
+	for result := range resultChan {
+		if result.success {
+			successCount++
+			fmt.Printf("[%d/%d] ✓ %s - Screenshot saved to %s\n",
+				result.work.index, result.work.total, result.work.target, result.filename)
+		} else {
+			failCount++
+			fmt.Printf("[%d/%d] ✗ %s - %v\n",
+				result.work.index, result.work.total, result.work.target, result.err)
+		}
+	}
+
+	fmt.Printf("\nCompleted: %d successful, %d failed\n", successCount, failCount)
+}
+
+type targetWork struct {
+	index  int
+	total  int
+	target string
+}
+
+type targetResult struct {
+	work     targetWork
+	success  bool
+	filename string
+	err      error
+}
+
+func worker(id int, targets <-chan targetWork, results chan<- targetResult, wg *sync.WaitGroup,
+	timeout time.Duration, username string, password string, domain string, outputDir string) {
+	defer wg.Done()
+
+	for work := range targets {
 		// Create client options
 		opts := &rdp.ClientOptions{
-			Timeout:  *timeout,
-			Username: *username,
+			Timeout:  timeout,
+			Username: username,
+			Password: password,
+			Domain:   domain,
 		}
 
 		// Try to capture screenshot
-		if err := captureScreenshot(target, opts, *outputDir); err != nil {
-			fmt.Printf("Failed to capture screenshot from %s: %v\n", target, err)
-		} else {
-			fmt.Printf("Successfully captured screenshot from %s\n", target)
+		filename, err := captureScreenshot(work.target, opts, outputDir)
+
+		results <- targetResult{
+			work:     work,
+			success:  err == nil,
+			filename: filename,
+			err:      err,
 		}
 	}
 }
@@ -97,28 +168,27 @@ func readTargets(filename string) ([]string, error) {
 	return targets, scanner.Err()
 }
 
-func captureScreenshot(target string, opts *rdp.ClientOptions, outputDir string) error {
+func captureScreenshot(target string, opts *rdp.ClientOptions, outputDir string) (string, error) {
 	// Create RDP client
 	client, err := rdp.NewClient(target, opts)
 	if err != nil {
-		return fmt.Errorf("failed to create client: %w", err)
+		return "", fmt.Errorf("failed to create client: %w", err)
 	}
 	defer client.Close()
 
 	// Capture screenshot
 	imageData, err := client.Screenshot()
 	if err != nil {
-		return fmt.Errorf("failed to capture screenshot: %w", err)
+		return "", fmt.Errorf("failed to capture screenshot: %w", err)
 	}
 
 	// Save screenshot
 	filename := fmt.Sprintf("%s/%s.png", outputDir, sanitizeFilename(target))
 	if err := saveScreenshot(filename, imageData); err != nil {
-		return fmt.Errorf("failed to save screenshot: %w", err)
+		return "", fmt.Errorf("failed to save screenshot: %w", err)
 	}
 
-	fmt.Printf("Screenshot saved to %s\n", filename)
-	return nil
+	return filename, nil
 }
 
 func sanitizeFilename(s string) string {
