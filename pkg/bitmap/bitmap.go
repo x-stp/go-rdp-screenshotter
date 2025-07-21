@@ -312,7 +312,14 @@ func convert16BitToRGBA(data []byte, img *image.RGBA, width, height uint16) erro
 
 	for y := uint16(0); y < height; y++ {
 		for x := uint16(0); x < width; x++ {
-			offset := int((y*width + x) * 2)
+			// RDP bitmaps are bottom-up, so flip the y coordinate
+			srcY := height - y - 1
+			offset := int((srcY*width + x) * 2)
+
+			if offset+1 >= len(data) {
+				continue
+			}
+
 			pixel := binary.LittleEndian.Uint16(data[offset : offset+2])
 
 			// RGB565 format
@@ -334,13 +341,30 @@ func convert16BitToRGBA(data []byte, img *image.RGBA, width, height uint16) erro
 
 // convert24BitToRGBA converts 24-bit BGR data to RGBA
 func convert24BitToRGBA(data []byte, img *image.RGBA, width, height uint16) error {
-	if len(data) < int(width*height*3) {
-		return fmt.Errorf("insufficient data for 24-bit image")
+	// Calculate row padding - RDP aligns rows to 4-byte boundaries
+	rowSize := int(width) * 3
+	padding := (4 - (rowSize % 4)) % 4
+	paddedRowSize := rowSize + padding
+
+	expectedSize := paddedRowSize * int(height)
+	if len(data) < expectedSize {
+		// Try without padding if data is too short
+		if len(data) < int(width*height*3) {
+			return fmt.Errorf("insufficient data for 24-bit image")
+		}
+		padding = 0
+		paddedRowSize = rowSize
 	}
 
 	for y := uint16(0); y < height; y++ {
 		for x := uint16(0); x < width; x++ {
-			offset := int((y*width + x) * 3)
+			// RDP bitmaps are bottom-up, so flip the y coordinate
+			srcY := height - y - 1
+			offset := int(srcY)*paddedRowSize + int(x)*3
+
+			if offset+2 >= len(data) {
+				continue
+			}
 
 			b := data[offset]
 			g := data[offset+1]
@@ -361,7 +385,13 @@ func convert32BitToRGBA(data []byte, img *image.RGBA, width, height uint16) erro
 
 	for y := uint16(0); y < height; y++ {
 		for x := uint16(0); x < width; x++ {
-			offset := int((y*width + x) * 4)
+			// RDP bitmaps are bottom-up, so flip the y coordinate
+			srcY := height - y - 1
+			offset := int((srcY*width + x) * 4)
+
+			if offset+3 >= len(data) {
+				continue
+			}
 
 			b := data[offset]
 			g := data[offset+1]
