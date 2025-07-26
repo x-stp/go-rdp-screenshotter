@@ -1,18 +1,18 @@
-// RDP Screenshotter - Capture screenshots from RDP servers
-// Copyright (C) 2025 - Pepijn van der Stap, pepijn@neosecurity.nl
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published
-// by the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 package bitmap
 
@@ -26,7 +26,7 @@ import (
 	"io"
 )
 
-// BitmapData represents a parsed RDP bitmap
+
 type BitmapData struct {
 	DestLeft   uint16
 	DestTop    uint16
@@ -40,8 +40,8 @@ type BitmapData struct {
 	Data       []byte
 }
 
-// ParseBitmapUpdateData parses RDP bitmap update data
-// MS-RDPBCGR section 2.2.9.1.1.3.1.2
+
+
 func ParseBitmapUpdateData(data []byte) ([]*BitmapData, error) {
 	if len(data) < 4 {
 		return nil, fmt.Errorf("bitmap update data too short")
@@ -49,7 +49,7 @@ func ParseBitmapUpdateData(data []byte) ([]*BitmapData, error) {
 
 	r := bytes.NewReader(data)
 
-	// Read update type (should be UPDATETYPE_BITMAP = 0x0001)
+	
 	var updateType uint16
 	if err := binary.Read(r, binary.LittleEndian, &updateType); err != nil {
 		return nil, err
@@ -59,7 +59,7 @@ func ParseBitmapUpdateData(data []byte) ([]*BitmapData, error) {
 		return nil, fmt.Errorf("invalid update type: %04X", updateType)
 	}
 
-	// Read number of rectangles
+	
 	var numRects uint16
 	if err := binary.Read(r, binary.LittleEndian, &numRects); err != nil {
 		return nil, err
@@ -70,7 +70,7 @@ func ParseBitmapUpdateData(data []byte) ([]*BitmapData, error) {
 	for i := uint16(0); i < numRects; i++ {
 		bitmap := &BitmapData{}
 
-		// Read rectangle coordinates
+		
 		binary.Read(r, binary.LittleEndian, &bitmap.DestLeft)
 		binary.Read(r, binary.LittleEndian, &bitmap.DestTop)
 		binary.Read(r, binary.LittleEndian, &bitmap.DestRight)
@@ -79,15 +79,15 @@ func ParseBitmapUpdateData(data []byte) ([]*BitmapData, error) {
 		binary.Read(r, binary.LittleEndian, &bitmap.Height)
 		binary.Read(r, binary.LittleEndian, &bitmap.BitsPerPel)
 
-		// Read compression flags
+		
 		var flags uint16
 		binary.Read(r, binary.LittleEndian, &flags)
 		bitmap.Compressed = (flags & 0x0001) != 0
 
-		// Read bitmap data length
+		
 		binary.Read(r, binary.LittleEndian, &bitmap.DataLength)
 
-		// Read bitmap data
+		
 		bitmap.Data = make([]byte, bitmap.DataLength)
 		if _, err := io.ReadFull(r, bitmap.Data); err != nil {
 			return nil, fmt.Errorf("failed to read bitmap data: %w", err)
@@ -99,10 +99,10 @@ func ParseBitmapUpdateData(data []byte) ([]*BitmapData, error) {
 	return bitmaps, nil
 }
 
-// DecodeRawBitmap decodes raw bitmap data into an image
+
 func DecodeRawBitmap(bitmap *BitmapData) (image.Image, error) {
 	if bitmap.Compressed {
-		// TODO: Implement RLE decompression
+		
 		return nil, fmt.Errorf("compressed bitmaps not yet supported")
 	}
 
@@ -112,18 +112,18 @@ func DecodeRawBitmap(bitmap *BitmapData) (image.Image, error) {
 
 	switch bitmap.BitsPerPel {
 	case 8:
-		// 8-bit indexed color (would need palette)
+		
 		return nil, fmt.Errorf("8-bit color not yet supported")
 
 	case 15, 16:
-		// 16-bit RGB (5-5-5 or 5-6-5)
+		
 		if len(bitmap.Data) < width*height*2 {
 			return nil, fmt.Errorf("insufficient bitmap data for 16-bit color")
 		}
 
 		for y := 0; y < height; y++ {
 			for x := 0; x < width; x++ {
-				// RDP bitmaps are bottom-up
+				
 				srcY := height - y - 1
 				offset := (srcY*width + x) * 2
 
@@ -131,12 +131,12 @@ func DecodeRawBitmap(bitmap *BitmapData) (image.Image, error) {
 
 				var r, g, b uint8
 				if bitmap.BitsPerPel == 15 {
-					// 5-5-5 format
+					
 					r = uint8((pixel>>10)&0x1F) << 3
 					g = uint8((pixel>>5)&0x1F) << 3
 					b = uint8(pixel&0x1F) << 3
 				} else {
-					// 5-6-5 format
+					
 					r = uint8((pixel>>11)&0x1F) << 3
 					g = uint8((pixel>>5)&0x3F) << 2
 					b = uint8(pixel&0x1F) << 3
@@ -147,18 +147,18 @@ func DecodeRawBitmap(bitmap *BitmapData) (image.Image, error) {
 		}
 
 	case 24:
-		// 24-bit RGB
+		
 		if len(bitmap.Data) < width*height*3 {
 			return nil, fmt.Errorf("insufficient bitmap data for 24-bit color")
 		}
 
 		for y := 0; y < height; y++ {
 			for x := 0; x < width; x++ {
-				// RDP bitmaps are bottom-up
+				
 				srcY := height - y - 1
 				offset := (srcY*width + x) * 3
 
-				// BGR format
+				
 				b := bitmap.Data[offset]
 				g := bitmap.Data[offset+1]
 				r := bitmap.Data[offset+2]
@@ -168,18 +168,18 @@ func DecodeRawBitmap(bitmap *BitmapData) (image.Image, error) {
 		}
 
 	case 32:
-		// 32-bit RGBA
+		
 		if len(bitmap.Data) < width*height*4 {
 			return nil, fmt.Errorf("insufficient bitmap data for 32-bit color")
 		}
 
 		for y := 0; y < height; y++ {
 			for x := 0; x < width; x++ {
-				// RDP bitmaps are bottom-up
+				
 				srcY := height - y - 1
 				offset := (srcY*width + x) * 4
 
-				// BGRA format
+				
 				b := bitmap.Data[offset]
 				g := bitmap.Data[offset+1]
 				r := bitmap.Data[offset+2]
@@ -196,25 +196,25 @@ func DecodeRawBitmap(bitmap *BitmapData) (image.Image, error) {
 	return img, nil
 }
 
-// SavePNG saves an image as a PNG file
+
 func SavePNG(img image.Image, filename string) error {
 	buf := new(bytes.Buffer)
 	if err := png.Encode(buf, img); err != nil {
 		return fmt.Errorf("failed to encode PNG: %w", err)
 	}
 
-	// TODO: Write to file
-	// For now, just return the size
+	
+	
 	fmt.Printf("PNG encoded: %d bytes for %s\n", buf.Len(), filename)
 	return nil
 }
 
-// CombineBitmaps combines multiple bitmap updates into a single image
+
 func CombineBitmaps(bitmaps []*BitmapData, width, height int) (image.Image, error) {
-	// Create a full-screen image
+	
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 
-	// Apply each bitmap update
+	
 	for _, bitmap := range bitmaps {
 		bmpImg, err := DecodeRawBitmap(bitmap)
 		if err != nil {
@@ -222,7 +222,7 @@ func CombineBitmaps(bitmaps []*BitmapData, width, height int) (image.Image, erro
 			continue
 		}
 
-		// Draw the bitmap at its destination
+		
 		for y := 0; y < int(bitmap.Height); y++ {
 			for x := 0; x < int(bitmap.Width); x++ {
 				destX := int(bitmap.DestLeft) + x
@@ -238,12 +238,12 @@ func CombineBitmaps(bitmaps []*BitmapData, width, height int) (image.Image, erro
 	return img, nil
 }
 
-// ConvertBitmapToImage converts RDP bitmap data to a PNG image
+
 func ConvertBitmapToImage(bitmapData interface{}) ([]byte, error) {
-	// Type assertion to get the actual bitmap data structure
+	
 	rect, ok := bitmapData.(*BitmapData)
 	if !ok {
-		// Try to get it from the rdp package type
+		
 		type rdpBitmapData struct {
 			DestLeft         uint16
 			DestTop          uint16
@@ -262,7 +262,7 @@ func ConvertBitmapToImage(bitmapData interface{}) ([]byte, error) {
 			return nil, fmt.Errorf("invalid bitmap data type")
 		}
 
-		// Convert to our BitmapData type
+		
 		rect = &BitmapData{
 			Width:      rdpRect.Width,
 			Height:     rdpRect.Height,
@@ -271,23 +271,23 @@ func ConvertBitmapToImage(bitmapData interface{}) ([]byte, error) {
 		}
 	}
 
-	// Create RGBA image
+	
 	img := image.NewRGBA(image.Rect(0, 0, int(rect.Width), int(rect.Height)))
 
-	// Convert pixel data based on bits per pixel
+	
 	switch rect.BitsPerPel {
 	case 15, 16:
-		// 16-bit RGB (5-6-5 or 5-5-5)
+		
 		if err := convert16BitToRGBA(rect.Data, img, rect.Width, rect.Height); err != nil {
 			return nil, err
 		}
 	case 24:
-		// 24-bit BGR
+		
 		if err := convert24BitToRGBA(rect.Data, img, rect.Width, rect.Height); err != nil {
 			return nil, err
 		}
 	case 32:
-		// 32-bit BGRA
+		
 		if err := convert32BitToRGBA(rect.Data, img, rect.Width, rect.Height); err != nil {
 			return nil, err
 		}
@@ -295,7 +295,7 @@ func ConvertBitmapToImage(bitmapData interface{}) ([]byte, error) {
 		return nil, fmt.Errorf("unsupported bits per pixel: %d", rect.BitsPerPel)
 	}
 
-	// Encode to PNG
+	
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
 		return nil, fmt.Errorf("failed to encode PNG: %w", err)
@@ -304,7 +304,7 @@ func ConvertBitmapToImage(bitmapData interface{}) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// convert16BitToRGBA converts 16-bit RGB data to RGBA
+
 func convert16BitToRGBA(data []byte, img *image.RGBA, width, height uint16) error {
 	if len(data) < int(width*height*2) {
 		return fmt.Errorf("insufficient data for 16-bit image")
@@ -312,7 +312,7 @@ func convert16BitToRGBA(data []byte, img *image.RGBA, width, height uint16) erro
 
 	for y := uint16(0); y < height; y++ {
 		for x := uint16(0); x < width; x++ {
-			// RDP bitmaps are bottom-up, so flip the y coordinate
+			
 			srcY := height - y - 1
 			offset := int((srcY*width + x) * 2)
 
@@ -322,12 +322,12 @@ func convert16BitToRGBA(data []byte, img *image.RGBA, width, height uint16) erro
 
 			pixel := binary.LittleEndian.Uint16(data[offset : offset+2])
 
-			// RGB565 format
+			
 			r := uint8((pixel >> 11) & 0x1F)
 			g := uint8((pixel >> 5) & 0x3F)
 			b := uint8(pixel & 0x1F)
 
-			// Scale to 8-bit
+			
 			r = (r << 3) | (r >> 2)
 			g = (g << 2) | (g >> 4)
 			b = (b << 3) | (b >> 2)
@@ -339,16 +339,16 @@ func convert16BitToRGBA(data []byte, img *image.RGBA, width, height uint16) erro
 	return nil
 }
 
-// convert24BitToRGBA converts 24-bit BGR data to RGBA
+
 func convert24BitToRGBA(data []byte, img *image.RGBA, width, height uint16) error {
-	// Calculate row padding - RDP aligns rows to 4-byte boundaries
+	
 	rowSize := int(width) * 3
 	padding := (4 - (rowSize % 4)) % 4
 	paddedRowSize := rowSize + padding
 
 	expectedSize := paddedRowSize * int(height)
 	if len(data) < expectedSize {
-		// Try without padding if data is too short
+		
 		if len(data) < int(width*height*3) {
 			return fmt.Errorf("insufficient data for 24-bit image")
 		}
@@ -358,7 +358,7 @@ func convert24BitToRGBA(data []byte, img *image.RGBA, width, height uint16) erro
 
 	for y := uint16(0); y < height; y++ {
 		for x := uint16(0); x < width; x++ {
-			// RDP bitmaps are bottom-up, so flip the y coordinate
+			
 			srcY := height - y - 1
 			offset := int(srcY)*paddedRowSize + int(x)*3
 
@@ -377,7 +377,7 @@ func convert24BitToRGBA(data []byte, img *image.RGBA, width, height uint16) erro
 	return nil
 }
 
-// convert32BitToRGBA converts 32-bit BGRA data to RGBA
+
 func convert32BitToRGBA(data []byte, img *image.RGBA, width, height uint16) error {
 	if len(data) < int(width*height*4) {
 		return fmt.Errorf("insufficient data for 32-bit image")
@@ -385,7 +385,7 @@ func convert32BitToRGBA(data []byte, img *image.RGBA, width, height uint16) erro
 
 	for y := uint16(0); y < height; y++ {
 		for x := uint16(0); x < width; x++ {
-			// RDP bitmaps are bottom-up, so flip the y coordinate
+			
 			srcY := height - y - 1
 			offset := int((srcY*width + x) * 4)
 
@@ -403,4 +403,34 @@ func convert32BitToRGBA(data []byte, img *image.RGBA, width, height uint16) erro
 	}
 
 	return nil
+}
+
+
+func ConvertRGBToPNG(data []byte, width, height int) ([]byte, error) {
+	if len(data) < width*height*3 {
+		return nil, fmt.Errorf("insufficient data for %dx%d RGB image", width, height)
+	}
+	
+	
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	
+	
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			offset := (y*width + x) * 3
+			r := data[offset]
+			g := data[offset+1]
+			b := data[offset+2]
+			
+			img.Set(x, y, color.RGBA{r, g, b, 255}) 
+		}
+	}
+	
+	
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil, fmt.Errorf("failed to encode PNG: %w", err)
+	}
+	
+	return buf.Bytes(), nil
 }

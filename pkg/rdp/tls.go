@@ -1,22 +1,23 @@
-// RDP Screenshotter Go - Capture screenshots from RDP servers
-// Copyright (C) 2025 - Pepijn van der Stap, pepijn@neosecurity.nl
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published
-// by the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 package rdp
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"net"
 	"time"
@@ -24,30 +25,32 @@ import (
 	ztls "github.com/zmap/zcrypto/tls"
 )
 
-// TLSConfig holds TLS configuration for RDP connections
+
 type TLSConfig struct {
-	// ServerName for SNI
+	
 	ServerName string
 
-	// InsecureSkipVerify allows connections to servers with invalid certificates
+	
 	InsecureSkipVerify bool
 
-	// Timeout for TLS handshake
+	
 	Timeout time.Duration
 }
 
-// DefaultTLSConfig returns a default TLS configuration for RDP
+
 func DefaultTLSConfig(serverName string) *TLSConfig {
 	return &TLSConfig{
 		ServerName:         serverName,
-		InsecureSkipVerify: true, // RDP servers often have self-signed certs
+		InsecureSkipVerify: true, 
 		Timeout:            10 * time.Second,
 	}
 }
 
-// upgradeTLSConnection upgrades an existing TCP connection to TLS
+
 func (c *Client) upgradeTLSConnection(tlsConfig *TLSConfig) error {
-	// Extract hostname from target if not provided
+	fmt.Printf("\n=== UPGRADING CONNECTION TO TLS ===\n")
+	
+	
 	if tlsConfig.ServerName == "" {
 		host, _, err := net.SplitHostPort(c.target)
 		if err != nil {
@@ -56,15 +59,20 @@ func (c *Client) upgradeTLSConnection(tlsConfig *TLSConfig) error {
 			tlsConfig.ServerName = host
 		}
 	}
+	
+	fmt.Printf("TLS Configuration:\n")
+	fmt.Printf("  Server Name: %s\n", tlsConfig.ServerName)
+	fmt.Printf("  Skip Verify: %v\n", tlsConfig.InsecureSkipVerify)
+	fmt.Printf("  Timeout: %v\n", tlsConfig.Timeout)
 
-	// Create zcrypto TLS configuration
+	
 	config := &ztls.Config{
 		ServerName:         tlsConfig.ServerName,
 		InsecureSkipVerify: tlsConfig.InsecureSkipVerify,
 		MinVersion:         ztls.VersionTLS10,
 		MaxVersion:         ztls.VersionTLS12,
 		CipherSuites: []uint16{
-			// Include common cipher suites that RDP servers use
+			
 			ztls.TLS_RSA_WITH_AES_128_CBC_SHA,
 			ztls.TLS_RSA_WITH_AES_256_CBC_SHA,
 			ztls.TLS_RSA_WITH_AES_128_GCM_SHA256,
@@ -76,49 +84,79 @@ func (c *Client) upgradeTLSConnection(tlsConfig *TLSConfig) error {
 		},
 	}
 
-	// Set deadline for TLS handshake
+	
 	if err := c.conn.SetDeadline(time.Now().Add(tlsConfig.Timeout)); err != nil {
 		return fmt.Errorf("failed to set TLS deadline: %w", err)
 	}
 
-	// Upgrade connection to TLS
+	
 	tlsConn := ztls.Client(c.conn, config)
 
-	// Perform TLS handshake
+	
+	fmt.Printf("\nPerforming TLS handshake...\n")
 	if err := tlsConn.Handshake(); err != nil {
+		fmt.Printf("TLS handshake failed: %v\n", err)
 		return fmt.Errorf("TLS handshake failed: %w", err)
 	}
 
-	// Clear deadline
+	
 	if err := tlsConn.SetDeadline(time.Time{}); err != nil {
 		return fmt.Errorf("failed to clear TLS deadline: %w", err)
 	}
 
-	// Log TLS connection details
+	
 	state := tlsConn.ConnectionState()
-	fmt.Printf("TLS connection established:\n")
+	fmt.Printf("\nTLS handshake completed successfully!\n")
+	fmt.Printf("TLS Connection Details:\n")
 	fmt.Printf("  Version: %s\n", tlsVersionString(state.Version))
-	fmt.Printf("  Cipher Suite: 0x%04X\n", state.CipherSuite)
+	fmt.Printf("  Cipher Suite: 0x%04X (%s)\n", state.CipherSuite, cipherSuiteName(state.CipherSuite))
 	fmt.Printf("  Server Name: %s\n", tlsConfig.ServerName)
+	fmt.Printf("  Handshake Complete: %v\n", state.HandshakeComplete)
+	fmt.Printf("  NegotiatedProtocol: %q\n", state.NegotiatedProtocol)
+	fmt.Printf("  NegotiatedProtocolIsMutual: %v\n", state.NegotiatedProtocolIsMutual)
 
 	if len(state.PeerCertificates) > 0 {
 		cert := state.PeerCertificates[0]
-		fmt.Printf("  Certificate Subject: %s\n", cert.Subject)
-		fmt.Printf("  Certificate Issuer: %s\n", cert.Issuer)
+		fmt.Printf("\nServer Certificate:\n")
+		fmt.Printf("  Subject: %s\n", cert.Subject)
+		fmt.Printf("  Issuer: %s\n", cert.Issuer)
+		fmt.Printf("  Serial Number: %s\n", cert.SerialNumber)
+		fmt.Printf("  Not Before: %s\n", cert.NotBefore)
+		fmt.Printf("  Not After: %s\n", cert.NotAfter)
+		fmt.Printf("  DNS Names: %v\n", cert.DNSNames)
+		fmt.Printf("  IP Addresses: %v\n", cert.IPAddresses)
+	}
+	
+	
+	if len(state.PeerCertificates) > 0 {
+		c.tlsCertificate = state.PeerCertificates[0].Raw
+		fmt.Printf("\nStored server certificate for NLA (%d bytes)\n", len(c.tlsCertificate))
+		fmt.Printf("Certificate SHA256: ")
+		hash := sha256.Sum256(c.tlsCertificate)
+		for i, b := range hash {
+			if i > 0 {
+				fmt.Print(":")
+			}
+			fmt.Printf("%02x", b)
+		}
+		fmt.Println()
 	}
 
-	// Replace the connection with TLS connection
+	
 	c.conn = tlsConn
 	c.tlsEnabled = true
 
+	fmt.Printf("\nTLS upgrade completed successfully\n")
+	fmt.Printf("======================================\n\n")
+	
 	return nil
 }
 
-// tlsVersionString returns a human-readable TLS version string
+
 func tlsVersionString(version uint16) string {
 	switch version {
 	case 0x0002:
-		return "SSL 2.0" // solaris? RISC should be banned from the internet
+		return "SSL 2.0" 
 	case ztls.VersionSSL30:
 		return "SSL 3.0"
 	case ztls.VersionTLS10:
@@ -127,14 +165,38 @@ func tlsVersionString(version uint16) string {
 		return "TLS 1.1"
 	case ztls.VersionTLS12:
 		return "TLS 1.2"
-	case 0x0304: // TLS 1.3 constant - likely fake RDP service as TLS1.3 and MS don't go hand in hand
+	case 0x0304: 
 		return "TLS 1.3"
 	default:
 		return fmt.Sprintf("Unknown (0x%04x)", version)
 	}
 }
 
-// isTLSRequired checks if the negotiated protocol requires TLS
+
 func isTLSRequired(protocol uint32) bool {
 	return protocol == PROTOCOL_SSL || protocol == PROTOCOL_HYBRID || protocol == PROTOCOL_HYBRID_EX
+}
+
+
+func cipherSuiteName(suite uint16) string {
+	switch suite {
+	case ztls.TLS_RSA_WITH_AES_128_CBC_SHA:
+		return "RSA_WITH_AES_128_CBC_SHA"
+	case ztls.TLS_RSA_WITH_AES_256_CBC_SHA:
+		return "RSA_WITH_AES_256_CBC_SHA"
+	case ztls.TLS_RSA_WITH_AES_128_GCM_SHA256:
+		return "RSA_WITH_AES_128_GCM_SHA256"
+	case ztls.TLS_RSA_WITH_AES_256_GCM_SHA384:
+		return "RSA_WITH_AES_256_GCM_SHA384"
+	case ztls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA:
+		return "ECDHE_RSA_WITH_AES_128_CBC_SHA"
+	case ztls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA:
+		return "ECDHE_RSA_WITH_AES_256_CBC_SHA"
+	case ztls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:
+		return "ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+	case ztls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:
+		return "ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+	default:
+		return "Unknown"
+	}
 }
