@@ -1,18 +1,18 @@
-// RDP Screenshotter Go - Capture screenshots from RDP servers
-// Copyright (C) 2025 - Pepijn van der Stap, pepijn@neosecurity.nl
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published
-// by the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 package rdp
 
@@ -23,7 +23,7 @@ import (
 	"io"
 )
 
-// Fast-Path Update Types
+
 const (
 	FASTPATH_UPDATETYPE_ORDERS       = 0x0
 	FASTPATH_UPDATETYPE_BITMAP       = 0x1
@@ -38,14 +38,14 @@ const (
 	FASTPATH_UPDATETYPE_POINTER      = 0xB
 )
 
-// ShareControlHeader represents TS_SHARECONTROLHEADER
+
 type ShareControlHeader struct {
 	TotalLength uint16
 	PDUType     uint16
 	PDUSource   uint16
 }
 
-// ShareDataHeader represents TS_SHAREDATAHEADER
+
 type ShareDataHeader struct {
 	ShareID            uint32
 	Pad1               uint8
@@ -56,20 +56,20 @@ type ShareDataHeader struct {
 	CompressedLength   uint16
 }
 
-// SynchronizePDU represents the Synchronize PDU (MS-RDPBCGR 2.2.1.14)
+
 type SynchronizePDU struct {
 	MessageType uint16
 	TargetUser  uint16
 }
 
-// ControlPDU represents the Control PDU (MS-RDPBCGR 2.2.1.15)
+
 type ControlPDU struct {
 	Action    uint16
 	GrantID   uint16
 	ControlID uint32
 }
 
-// Control PDU Actions
+
 const (
 	CTRLACTION_REQUEST_CONTROL = 0x0001
 	CTRLACTION_GRANTED_CONTROL = 0x0002
@@ -77,7 +77,7 @@ const (
 	CTRLACTION_COOPERATE       = 0x0004
 )
 
-// FontListPDU represents the Font List PDU (MS-RDPBCGR 2.2.1.18)
+
 type FontListPDU struct {
 	NumberFonts   uint16
 	TotalNumFonts uint16
@@ -85,7 +85,7 @@ type FontListPDU struct {
 	EntrySize     uint16
 }
 
-// Input event message types
+
 const (
 	INPUT_EVENT_SYNC     = 0x0000
 	INPUT_EVENT_SCANCODE = 0x0004
@@ -94,7 +94,7 @@ const (
 	INPUT_EVENT_MOUSEX   = 0x8002
 )
 
-// Mouse event flags
+
 const (
 	PTRFLAGS_MOVE    = 0x0800
 	PTRFLAGS_DOWN    = 0x8000
@@ -103,71 +103,109 @@ const (
 	PTRFLAGS_BUTTON3 = 0x4000
 )
 
-// buildSynchronizePDU creates a Client Synchronize PDU
+
 func buildSynchronizePDU(targetUser uint16) []byte {
 	buf := new(bytes.Buffer)
 
-	// TS_SYNCHRONIZE_PDU
-	binary.Write(buf, binary.LittleEndian, uint16(1)) // messageType (SYNCMSGTYPE_SYNC)
+	
+	binary.Write(buf, binary.LittleEndian, uint16(1)) 
 	binary.Write(buf, binary.LittleEndian, targetUser)
 
 	return wrapInShareDataPDU(buf.Bytes(), PDUTYPE2_SYNCHRONIZE, 0)
 }
 
-// buildControlPDU creates a Control PDU
+
 func buildControlPDU(action uint16) []byte {
 	buf := new(bytes.Buffer)
 
-	// TS_CONTROL_PDU
+	
 	binary.Write(buf, binary.LittleEndian, action)
-	binary.Write(buf, binary.LittleEndian, uint16(0)) // grantId
-	binary.Write(buf, binary.LittleEndian, uint32(0)) // controlId
+	binary.Write(buf, binary.LittleEndian, uint16(0)) 
+	binary.Write(buf, binary.LittleEndian, uint32(0)) 
 
 	return wrapInShareDataPDU(buf.Bytes(), PDUTYPE2_CONTROL, 0)
 }
 
-// buildFontListPDU creates a Font List PDU
+
 func buildFontListPDU() []byte {
 	buf := new(bytes.Buffer)
 
-	// TS_FONT_LIST_PDU
-	binary.Write(buf, binary.LittleEndian, uint16(0))  // numberFonts
-	binary.Write(buf, binary.LittleEndian, uint16(0))  // totalNumFonts
-	binary.Write(buf, binary.LittleEndian, uint16(3))  // listFlags (FONTLIST_FIRST | FONTLIST_LAST)
-	binary.Write(buf, binary.LittleEndian, uint16(50)) // entrySize
+	
+	binary.Write(buf, binary.LittleEndian, uint16(0))  
+	binary.Write(buf, binary.LittleEndian, uint16(0))  
+	binary.Write(buf, binary.LittleEndian, uint16(3))  
+	binary.Write(buf, binary.LittleEndian, uint16(50)) 
 
 	return wrapInShareDataPDU(buf.Bytes(), PDUTYPE2_FONTLIST, 0)
 }
 
-// wrapInShareDataPDU wraps data in a Share Data PDU
+
+
+func buildPersistentKeyListPDU(bitmapCacheEntries []PersistentCacheEntry) []byte {
+	buf := new(bytes.Buffer)
+	
+	
+	numEntries := uint16(len(bitmapCacheEntries))
+	if numEntries > 169 { 
+		numEntries = 169
+	}
+	
+	binary.Write(buf, binary.LittleEndian, numEntries)
+	binary.Write(buf, binary.LittleEndian, numEntries) 
+	binary.Write(buf, binary.LittleEndian, uint8(0x03)) 
+	binary.Write(buf, binary.LittleEndian, uint8(0))    
+	binary.Write(buf, binary.LittleEndian, uint16(0))   
+	
+	
+	for i := uint16(0); i < numEntries; i++ {
+		if i < uint16(len(bitmapCacheEntries)) {
+			entry := bitmapCacheEntries[i]
+			binary.Write(buf, binary.LittleEndian, entry.Key1)
+			binary.Write(buf, binary.LittleEndian, entry.Key2)
+		} else {
+			
+			binary.Write(buf, binary.LittleEndian, uint64(0))
+		}
+	}
+	
+	return wrapInShareDataPDU(buf.Bytes(), PDUTYPE2_BITMAPCACHE_PERSISTENT_LIST, 0)
+}
+
+
+type PersistentCacheEntry struct {
+	Key1 uint32
+	Key2 uint32
+}
+
+
 func wrapInShareDataPDU(data []byte, pduType2 uint8, shareID uint32) []byte {
 	buf := new(bytes.Buffer)
 
-	// TS_SHARECONTROLHEADER
-	binary.Write(buf, binary.LittleEndian, uint16(0))                    // totalLength - will be filled
-	binary.Write(buf, binary.LittleEndian, uint16(PDUTYPE_DATAPDU|0x10)) // pduType
-	binary.Write(buf, binary.LittleEndian, uint16(MCS_CHANNEL_GLOBAL))   // pduSource
+	
+	binary.Write(buf, binary.LittleEndian, uint16(0))                    
+	binary.Write(buf, binary.LittleEndian, uint16(PDUTYPE_DATAPDU|0x10)) 
+	binary.Write(buf, binary.LittleEndian, uint16(MCS_CHANNEL_GLOBAL))   
 
-	// TS_SHAREDATAHEADER
+	
 	binary.Write(buf, binary.LittleEndian, shareID)
-	binary.Write(buf, binary.LittleEndian, uint8(0))            // pad1
-	binary.Write(buf, binary.LittleEndian, uint8(1))            // streamId (STREAM_LOW)
-	binary.Write(buf, binary.LittleEndian, uint16(len(data)+8)) // uncompressedLength
+	binary.Write(buf, binary.LittleEndian, uint8(0))            
+	binary.Write(buf, binary.LittleEndian, uint8(1))            
+	binary.Write(buf, binary.LittleEndian, uint16(len(data)+8)) 
 	binary.Write(buf, binary.LittleEndian, pduType2)
-	binary.Write(buf, binary.LittleEndian, uint8(0))  // compressedType (not compressed)
-	binary.Write(buf, binary.LittleEndian, uint16(0)) // compressedLength
+	binary.Write(buf, binary.LittleEndian, uint8(0))  
+	binary.Write(buf, binary.LittleEndian, uint16(0)) 
 
-	// Data
+	
 	buf.Write(data)
 
-	// Update total length
+	
 	result := buf.Bytes()
 	binary.LittleEndian.PutUint16(result[0:2], uint16(len(result)))
 
 	return result
 }
 
-// parseShareControlHeader parses a TS_SHARECONTROLHEADER
+
 func parseShareControlHeader(r io.Reader) (*ShareControlHeader, error) {
 	hdr := &ShareControlHeader{}
 	if err := binary.Read(r, binary.LittleEndian, hdr); err != nil {
@@ -176,7 +214,7 @@ func parseShareControlHeader(r io.Reader) (*ShareControlHeader, error) {
 	return hdr, nil
 }
 
-// parseShareDataHeader parses a TS_SHAREDATAHEADER
+
 func parseShareDataHeader(r io.Reader) (*ShareDataHeader, error) {
 	hdr := &ShareDataHeader{}
 	if err := binary.Read(r, binary.LittleEndian, hdr); err != nil {
@@ -185,7 +223,7 @@ func parseShareDataHeader(r io.Reader) (*ShareDataHeader, error) {
 	return hdr, nil
 }
 
-// BitmapData represents TS_BITMAP_DATA (MS-RDPBCGR 2.2.9.1.1.3.1.2)
+
 type BitmapData struct {
 	DestLeft         uint16
 	DestTop          uint16
@@ -199,14 +237,14 @@ type BitmapData struct {
 	BitmapDataStream []byte
 }
 
-// BitmapUpdateData represents TS_BITMAP_UPDATE (MS-RDPBCGR 2.2.9.1.1.3.1.1)
+
 type BitmapUpdateData struct {
 	UpdateType       uint16
 	NumberRectangles uint16
 	Rectangles       []BitmapData
 }
 
-// parseBitmapUpdateData parses bitmap update data
+
 func parseBitmapUpdateData(data []byte) (*BitmapUpdateData, error) {
 	if len(data) < 4 {
 		return nil, fmt.Errorf("bitmap update data too short: %d bytes", len(data))
@@ -215,23 +253,23 @@ func parseBitmapUpdateData(data []byte) (*BitmapUpdateData, error) {
 	update := &BitmapUpdateData{}
 	r := bytes.NewReader(data)
 
-	// Read header
+	
 	binary.Read(r, binary.LittleEndian, &update.UpdateType)
 	binary.Read(r, binary.LittleEndian, &update.NumberRectangles)
 
 	fmt.Printf("Bitmap update: type=0x%04X, rectangles=%d\n", update.UpdateType, update.NumberRectangles)
 
-	// Read rectangles
+	
 	update.Rectangles = make([]BitmapData, update.NumberRectangles)
 	for i := uint16(0); i < update.NumberRectangles; i++ {
 		rect := &update.Rectangles[i]
 
-		// Check if we have enough data for the header
+		
 		if r.Len() < 18 {
 			return nil, fmt.Errorf("insufficient data for rectangle %d header", i)
 		}
 
-		// Read bitmap header
+		
 		binary.Read(r, binary.LittleEndian, &rect.DestLeft)
 		binary.Read(r, binary.LittleEndian, &rect.DestTop)
 		binary.Read(r, binary.LittleEndian, &rect.DestRight)
@@ -242,12 +280,12 @@ func parseBitmapUpdateData(data []byte) (*BitmapUpdateData, error) {
 		binary.Read(r, binary.LittleEndian, &rect.Flags)
 		binary.Read(r, binary.LittleEndian, &rect.BitmapLength)
 
-		// Check for compressed bitmap
+		
 		if rect.Flags&0x0001 != 0 {
 			fmt.Printf("  Rectangle %d: compressed bitmap detected (not supported yet)\n", i)
 		}
 
-		// Read bitmap data
+		
 		if rect.BitmapLength > 0 {
 			if r.Len() < int(rect.BitmapLength) {
 				return nil, fmt.Errorf("insufficient data for rectangle %d bitmap: need %d, have %d",
@@ -265,17 +303,17 @@ func parseBitmapUpdateData(data []byte) (*BitmapUpdateData, error) {
 	return update, nil
 }
 
-// buildRefreshRectPDU creates a Refresh Rectangle PDU to request screen updates
+
 func buildRefreshRectPDU(left, top, right, bottom uint16) []byte {
 	buf := new(bytes.Buffer)
 
-	// Number of areas (1)
+	
 	binary.Write(buf, binary.LittleEndian, uint8(1))
-	// Pad3Octets
+	
 	binary.Write(buf, binary.LittleEndian, uint8(0))
 	binary.Write(buf, binary.LittleEndian, uint16(0))
 
-	// Inclusive Rectangle
+	
 	binary.Write(buf, binary.LittleEndian, left)
 	binary.Write(buf, binary.LittleEndian, top)
 	binary.Write(buf, binary.LittleEndian, right)
@@ -284,38 +322,38 @@ func buildRefreshRectPDU(left, top, right, bottom uint16) []byte {
 	return wrapInShareDataPDU(buf.Bytes(), PDUTYPE2_REFRESH_RECT, 0)
 }
 
-// buildSuppressOutputPDU creates a Suppress Output PDU
+
 func buildSuppressOutputPDU(allowDisplayUpdates bool) []byte {
 	buf := new(bytes.Buffer)
 
 	if allowDisplayUpdates {
-		binary.Write(buf, binary.LittleEndian, uint8(0)) // ALLOW_DISPLAY_UPDATES
-		binary.Write(buf, binary.LittleEndian, uint8(0)) // Pad3Octets
+		binary.Write(buf, binary.LittleEndian, uint8(0)) 
+		binary.Write(buf, binary.LittleEndian, uint8(0)) 
 		binary.Write(buf, binary.LittleEndian, uint16(0))
-		// Desktop rect
-		binary.Write(buf, binary.LittleEndian, uint16(0))    // left
-		binary.Write(buf, binary.LittleEndian, uint16(0))    // top
-		binary.Write(buf, binary.LittleEndian, uint16(1920)) // right
-		binary.Write(buf, binary.LittleEndian, uint16(1080)) // bottom
+		
+		binary.Write(buf, binary.LittleEndian, uint16(0))    
+		binary.Write(buf, binary.LittleEndian, uint16(0))    
+		binary.Write(buf, binary.LittleEndian, uint16(1920)) 
+		binary.Write(buf, binary.LittleEndian, uint16(1080)) 
 	} else {
-		binary.Write(buf, binary.LittleEndian, uint8(1)) // SUPPRESS_DISPLAY_UPDATES
-		binary.Write(buf, binary.LittleEndian, uint8(0)) // Pad3Octets
+		binary.Write(buf, binary.LittleEndian, uint8(1)) 
+		binary.Write(buf, binary.LittleEndian, uint8(0)) 
 		binary.Write(buf, binary.LittleEndian, uint16(0))
 	}
 
 	return wrapInShareDataPDU(buf.Bytes(), PDUTYPE2_SUPPRESS_OUTPUT, 0)
 }
 
-// buildInputEventPDU creates an Input Event PDU
+
 func buildInputEventPDU(events []InputEvent) []byte {
 	buf := new(bytes.Buffer)
 
-	// Number of events
+	
 	binary.Write(buf, binary.LittleEndian, uint16(len(events)))
-	// Pad
+	
 	binary.Write(buf, binary.LittleEndian, uint16(0))
 
-	// Write events
+	
 	for _, event := range events {
 		event.WriteTo(buf)
 	}
@@ -323,7 +361,7 @@ func buildInputEventPDU(events []InputEvent) []byte {
 	return wrapInShareDataPDU(buf.Bytes(), PDUTYPE2_INPUT, 0)
 }
 
-// InputEvent represents a single input event
+
 type InputEvent struct {
 	EventTime   uint32
 	MessageType uint16
@@ -332,7 +370,7 @@ type InputEvent struct {
 	Param2      uint16
 }
 
-// WriteTo writes the input event to a buffer
+
 func (e *InputEvent) WriteTo(w io.Writer) {
 	binary.Write(w, binary.LittleEndian, e.EventTime)
 	binary.Write(w, binary.LittleEndian, e.MessageType)
@@ -341,7 +379,7 @@ func (e *InputEvent) WriteTo(w io.Writer) {
 	binary.Write(w, binary.LittleEndian, e.Param2)
 }
 
-// buildMouseMoveEvent creates a mouse move event
+
 func buildMouseMoveEvent(x, y uint16) InputEvent {
 	return InputEvent{
 		EventTime:   0,
@@ -352,7 +390,7 @@ func buildMouseMoveEvent(x, y uint16) InputEvent {
 	}
 }
 
-// buildMouseClickEvent creates a mouse click event
+
 func buildMouseClickEvent(x, y uint16, button uint16, down bool) InputEvent {
 	flags := button
 	if down {
@@ -365,4 +403,106 @@ func buildMouseClickEvent(x, y uint16, button uint16, down bool) InputEvent {
 		Param1:      x,
 		Param2:      y,
 	}
+}
+
+
+func buildMockDemandActivePDU(userID uint16) []byte {
+	buf := new(bytes.Buffer)
+	
+	
+	buf.WriteByte(0x64) 
+	binary.Write(buf, binary.BigEndian, userID) 
+	binary.Write(buf, binary.BigEndian, uint16(1004)) 
+	buf.WriteByte(0x70) 
+	
+	
+	shareCtrlBuf := new(bytes.Buffer)
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint16(0)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint16(PDUTYPE_DEMANDACTIVEPDU|0x10)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, userID) 
+	
+	
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint32(0x12345678))
+	
+	
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint16(1)) 
+	
+	
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint16(CAPSTYPE_GENERAL)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint16(24)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint16(0x0103)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint16(0x0400)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint16(0x0200)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint16(0)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint16(0)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint16(0)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint16(0)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint16(0)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint16(0)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint8(0))  
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint8(0))  
+	
+	
+	shareCtrlData := shareCtrlBuf.Bytes()
+	binary.LittleEndian.PutUint16(shareCtrlData[0:2], uint16(len(shareCtrlData)))
+	
+	
+	if len(shareCtrlData) < 128 {
+		buf.WriteByte(byte(len(shareCtrlData)))
+	} else {
+		buf.WriteByte(0x81)
+		buf.WriteByte(byte(len(shareCtrlData)))
+	}
+	
+	buf.Write(shareCtrlData)
+	return buf.Bytes()
+}
+
+
+func buildRefreshRectanglePDU(userID uint16) []byte {
+	buf := new(bytes.Buffer)
+	
+	
+	buf.WriteByte(0x64) 
+	binary.Write(buf, binary.BigEndian, userID) 
+	binary.Write(buf, binary.BigEndian, uint16(1004)) 
+	buf.WriteByte(0x70) 
+	
+	
+	shareCtrlBuf := new(bytes.Buffer)
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint16(0)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint16(PDUTYPE_DATAPDU|0x10)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, userID) 
+	
+	
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint32(0)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint8(0)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint8(1)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint16(0)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint8(PDUTYPE2_REFRESH_RECT)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint8(0)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint16(0)) 
+	
+	
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint8(1)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint16(0)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint16(0)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint16(1024)) 
+	binary.Write(shareCtrlBuf, binary.LittleEndian, uint16(768)) 
+	
+	
+	shareCtrlData := shareCtrlBuf.Bytes()
+	binary.LittleEndian.PutUint16(shareCtrlData[0:2], uint16(len(shareCtrlData)))
+	binary.LittleEndian.PutUint16(shareCtrlData[12:14], uint16(len(shareCtrlData)-18)) 
+	
+	
+	if len(shareCtrlData) < 128 {
+		buf.WriteByte(byte(len(shareCtrlData)))
+	} else {
+		buf.WriteByte(0x81)
+		buf.WriteByte(byte(len(shareCtrlData)))
+	}
+	
+	buf.Write(shareCtrlData)
+	return buf.Bytes()
 }

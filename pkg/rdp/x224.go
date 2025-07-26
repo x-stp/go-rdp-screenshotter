@@ -1,18 +1,18 @@
-// RDP Screenshotter Go - Capture screenshots from RDP servers
-// Copyright (C) 2025 - Pepijn van der Stap, pepijn@neosecurity.nl
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published
-// by the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 package rdp
 
@@ -23,7 +23,7 @@ import (
 	"io"
 )
 
-// X224ConnectionRequest represents an X.224 Connection Request PDU
+
 type X224ConnectionRequest struct {
 	LengthIndicator uint8
 	TPDUCode        uint8
@@ -33,11 +33,11 @@ type X224ConnectionRequest struct {
 	Cookie          []byte
 }
 
-// NewX224ConnectionRequest creates a new X.224 Connection Request.
-// It no longer advertises NLA (PROTOCOL_HYBRID) to be more compatible with non-NLA servers.
+
+
 func NewX224ConnectionRequest(cookie string) *X224ConnectionRequest {
 	cr := &X224ConnectionRequest{
-		TPDUCode:     0xE0, // CR - Connection Request
+		TPDUCode:     0xE0, 
 		DstRef:       0,
 		SrcRef:       0x1234,
 		ClassOptions: 0,
@@ -47,7 +47,7 @@ func NewX224ConnectionRequest(cookie string) *X224ConnectionRequest {
 		Type:      TYPE_RDP_NEG_REQ,
 		Flags:     0,
 		Length:    8,
-		Protocols: PROTOCOL_RDP | PROTOCOL_SSL, // Request Standard RDP and TLS-based RDP
+		Protocols: PROTOCOL_RDP | PROTOCOL_SSL | PROTOCOL_HYBRID, 
 	}
 
 	var cookieData bytes.Buffer
@@ -61,12 +61,12 @@ func NewX224ConnectionRequest(cookie string) *X224ConnectionRequest {
 	return cr
 }
 
-// WriteTo implements io.WriterTo interface for X224ConnectionRequest.
+
 func (cr *X224ConnectionRequest) WriteTo(w io.Writer) (int64, error) {
-	// Use a buffer to track bytes written
+	
 	buf := new(bytes.Buffer)
 
-	// Write fixed header fields
+	
 	fields := []interface{}{
 		cr.LengthIndicator,
 		cr.TPDUCode,
@@ -81,43 +81,43 @@ func (cr *X224ConnectionRequest) WriteTo(w io.Writer) (int64, error) {
 		}
 	}
 
-	// Write variable part (cookie)
+	
 	if len(cr.Cookie) > 0 {
 		if _, err := buf.Write(cr.Cookie); err != nil {
 			return 0, fmt.Errorf("failed to write RDP cookie: %w", err)
 		}
 	}
 
-	// Write to the actual writer
+	
 	n, err := w.Write(buf.Bytes())
 	return int64(n), err
 }
 
-// X224ConnectionConfirm represents an X.224 Connection Confirm PDU (CC TPDU).
+
 type X224ConnectionConfirm struct {
 	LengthIndicator uint8
 	TPDUCode        uint8
 	DstRef          uint16
 	SrcRef          uint16
 	ClassOptions    uint8
-	// Additional fields may be present in the variable part
-	NegotiatedProtocol uint32 // The protocol selected by the server (0 if no negotiation)
+	
+	NegotiatedProtocol uint32 
 }
 
-// RDP Negotiation structures (MS-RDPBCGR section 2.2.1.1)
+
 const (
 	TYPE_RDP_NEG_REQ     = 0x01
 	TYPE_RDP_NEG_RSP     = 0x02
 	TYPE_RDP_NEG_FAILURE = 0x03
 
-	// Protocol flags
+	
 	PROTOCOL_RDP       = 0x00000000
 	PROTOCOL_SSL       = 0x00000001
 	PROTOCOL_HYBRID    = 0x00000002
 	PROTOCOL_RDSTLS    = 0x00000004
 	PROTOCOL_HYBRID_EX = 0x00000008
 
-	// Failure codes
+	
 	SSL_REQUIRED_BY_SERVER      = 0x00000001
 	SSL_NOT_ALLOWED_BY_SERVER   = 0x00000002
 	SSL_CERT_NOT_ON_SERVER      = 0x00000003
@@ -126,7 +126,7 @@ const (
 	SSL_WITH_USER_AUTH_REQUIRED = 0x00000006
 )
 
-// RDPNegReq represents an RDP Negotiation Request
+
 type RDPNegReq struct {
 	Type      uint8
 	Flags     uint8
@@ -134,7 +134,7 @@ type RDPNegReq struct {
 	Protocols uint32
 }
 
-// RDPNegRsp represents an RDP Negotiation Response
+
 type RDPNegRsp struct {
 	Type      uint8
 	Flags     uint8
@@ -142,7 +142,7 @@ type RDPNegRsp struct {
 	Protocols uint32
 }
 
-// RDPNegFailure represents an RDP Negotiation Failure
+
 type RDPNegFailure struct {
 	Type        uint8
 	Flags       uint8
@@ -150,7 +150,7 @@ type RDPNegFailure struct {
 	FailureCode uint32
 }
 
-// protocolName returns a human-readable name for the protocol
+
 func protocolName(protocol uint32) string {
 	switch protocol {
 	case PROTOCOL_RDP:
@@ -168,7 +168,7 @@ func protocolName(protocol uint32) string {
 	}
 }
 
-// failureReason returns a human-readable failure reason
+
 func failureReason(code uint32) string {
 	switch code {
 	case SSL_REQUIRED_BY_SERVER:
@@ -188,8 +188,8 @@ func failureReason(code uint32) string {
 	}
 }
 
-// parseRDPNegotiationResponse parses RDP negotiation data from X.224 CC
-// Returns the negotiated protocol (0 if no negotiation or failure)
+
+
 func parseRDPNegotiationResponse(data []byte) uint32 {
 	if len(data) < 1 {
 		return 0
@@ -242,16 +242,16 @@ func parseRDPNegotiationResponse(data []byte) uint32 {
 	return 0
 }
 
-// ReadX224ConnectionConfirm reads an X.224 Connection Confirm PDU from the reader.
+
 func ReadX224ConnectionConfirm(r io.Reader) (*X224ConnectionConfirm, error) {
 	var cc X224ConnectionConfirm
 
-	// Read length indicator
+	
 	if err := binary.Read(r, binary.BigEndian, &cc.LengthIndicator); err != nil {
 		return nil, fmt.Errorf("failed to read CC length indicator: %w", err)
 	}
 
-	// Read fixed header fields
+	
 	fields := []interface{}{
 		&cc.TPDUCode,
 		&cc.DstRef,
@@ -265,13 +265,13 @@ func ReadX224ConnectionConfirm(r io.Reader) (*X224ConnectionConfirm, error) {
 		}
 	}
 
-	// Validate TPDU code
+	
 	if cc.TPDUCode != X224_TPDU_CONNECTION_CONFIRM {
 		return nil, fmt.Errorf("invalid TPDU code for CC: expected 0x%02X, got 0x%02X",
 			X224_TPDU_CONNECTION_CONFIRM, cc.TPDUCode)
 	}
 
-	// Check if there's RDP negotiation data in the variable part
+	
 	if cc.LengthIndicator > 6 {
 		remaining := int(cc.LengthIndicator) - 6
 		negData := make([]byte, remaining)
@@ -279,22 +279,22 @@ func ReadX224ConnectionConfirm(r io.Reader) (*X224ConnectionConfirm, error) {
 			return nil, fmt.Errorf("failed to read CC variable part: %w", err)
 		}
 
-		// Parse RDP negotiation response and store the result
+		
 		cc.NegotiatedProtocol = parseRDPNegotiationResponse(negData)
 	}
 
 	return &cc, nil
 }
 
-// X224DataTPDU represents an X.224 Data TPDU (DT TPDU)
-// Used to transport user data after connection establishment
+
+
 type X224DataTPDU struct {
 	LengthIndicator uint8
 	TPDUCode        uint8
-	EOT             uint8 // End of TSDU mark (bit 7: 1=end, 0=not end)
+	EOT             uint8 
 }
 
-// WriteTo implements io.WriterTo interface for X224DataTPDU
+
 func (dt *X224DataTPDU) WriteTo(w io.Writer) (int64, error) {
 	data := []byte{
 		dt.LengthIndicator,
@@ -305,16 +305,19 @@ func (dt *X224DataTPDU) WriteTo(w io.Writer) (int64, error) {
 	return int64(n), err
 }
 
-// sendX224ConnectionRequest sends an X.224 Connection Request wrapped in a TPKT packet.
+
 func (c *Client) sendX224ConnectionRequest(cookie string) error {
-	// Create the X.224 CR PDU
+	fmt.Printf("\n=== SENDING X.224 CONNECTION REQUEST ===\n")
+	fmt.Printf("Cookie: %q\n", cookie)
+	
+	
 	cr := NewX224ConnectionRequest(cookie)
 
-	// Calculate total size for TPKT header
-	crSize := int(cr.LengthIndicator) + 1 // +1 for LI field itself
+	
+	crSize := int(cr.LengthIndicator) + 1 
 	tpkt := NewTPKTHeader(crSize)
 
-	// Write TPKT header and X.224 CR to buffer
+	
 	buf := new(bytes.Buffer)
 	if _, err := tpkt.WriteTo(buf); err != nil {
 		return err
@@ -323,37 +326,61 @@ func (c *Client) sendX224ConnectionRequest(cookie string) error {
 		return err
 	}
 
-	// Debug logging
-	fmt.Printf("Sending X.224 CR: TPKT length=%d, X.224 LI=%d, cookie=%q\n",
-		tpkt.Length, cr.LengthIndicator, string(cr.Cookie))
+	
+	fmt.Printf("TPKT Header: Version=%d, Length=%d\n", tpkt.Version, tpkt.Length)
+	fmt.Printf("X.224 CR: LI=%d, TPDU=0x%02X, DstRef=0x%04X, SrcRef=0x%04X\n",
+		cr.LengthIndicator, cr.TPDUCode, cr.DstRef, cr.SrcRef)
+	fmt.Printf("Total packet size: %d bytes\n", buf.Len())
+	fmt.Printf("\nX.224 CR Packet Hex:\n")
+	hexDump(buf.Bytes())
 
-	// Send to server
+	
 	if _, err := c.conn.Write(buf.Bytes()); err != nil {
 		return fmt.Errorf("failed to send X.224 Connection Request: %w", err)
 	}
 
+	fmt.Printf("X.224 Connection Request sent successfully\n\n")
 	return nil
 }
 
-// receiveX224ConnectionConfirm receives and parses an X.224 Connection Confirm PDU
+
 func (c *Client) receiveX224ConnectionConfirm() (uint32, error) {
-	// Read TPKT header
+	fmt.Printf("\n=== RECEIVING X.224 CONNECTION CONFIRM ===\n")
+	
+	
 	tpkt, err := ReadTPKTHeader(c.conn)
 	if err != nil {
 		return 0, fmt.Errorf("failed to read TPKT header: %w", err)
 	}
+	fmt.Printf("TPKT Header: Version=%d, Length=%d\n", tpkt.Version, tpkt.Length)
 
-	// Read X.224 Connection Confirm
-	cc, err := ReadX224ConnectionConfirm(c.conn)
+	
+	packetData := make([]byte, tpkt.Length-4) 
+	if _, err := io.ReadFull(c.conn, packetData); err != nil {
+		return 0, fmt.Errorf("failed to read packet data: %w", err)
+	}
+	
+	fmt.Printf("\nX.224 CC Packet Hex (after TPKT):\n")
+	hexDump(packetData)
+	
+	
+	buf := bytes.NewReader(packetData)
+	cc, err := ReadX224ConnectionConfirm(buf)
 	if err != nil {
 		return 0, err
 	}
 
-	// Store the source reference
+	
 	c.x224SrcRef = cc.SrcRef
 
-	fmt.Printf("X.224 Connection Confirm received (TPKT length: %d, DST-REF: 0x%04X, SRC-REF: 0x%04X)\n",
-		tpkt.Length, cc.DstRef, cc.SrcRef)
+	fmt.Printf("\nX.224 CC Fields:\n")
+	fmt.Printf("  Length Indicator: %d\n", cc.LengthIndicator)
+	fmt.Printf("  TPDU Code: 0x%02X\n", cc.TPDUCode)
+	fmt.Printf("  Dst Reference: 0x%04X\n", cc.DstRef)
+	fmt.Printf("  Src Reference: 0x%04X\n", cc.SrcRef)
+	fmt.Printf("  Class Options: 0x%02X\n", cc.ClassOptions)
+	fmt.Printf("  Negotiated Protocol: 0x%08X\n", cc.NegotiatedProtocol)
 
 	return cc.NegotiatedProtocol, nil
 }
+
