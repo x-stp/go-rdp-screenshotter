@@ -1,54 +1,54 @@
-// RDP Screenshotter - Capture screenshots from RDP servers
-// Copyright (C) 2025 - Pepijn van der Stap, pepijn@neosecurity.nl
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published
-// by the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 package rdp
 
-// RDP Protocol Constants with RFC/MS-RDPBCGR references
 
-// Default RDP port as per MS-RDPBCGR section 2.2.1.1
+
+
 const DefaultRDPPort = 3389
 
-// TPKT Header Constants (RFC 1006)
+
 const (
-	TPKTVersion    = 3 // RFC 1006 section 6
-	TPKTHeaderSize = 4 // Version(1) + Reserved(1) + Length(2)
+	TPKTVersion    = 3 
+	TPKTHeaderSize = 4 
 )
 
-// X.224 Connection Request/Response Constants (ITU-T X.224)
-const (
-	// TPDU Codes (ITU-T X.224 Table 13)
-	X224_TPDU_CONNECTION_REQUEST = 0xE0 // CR - Connection Request
-	X224_TPDU_CONNECTION_CONFIRM = 0xD0 // CC - Connection Confirm
-	X224_TPDU_DATA               = 0xF0 // DT - Data
 
-	// Fixed header size for CR TPDU: LI(1) + Code(1) + DST-REF(2) + SRC-REF(2) + Class(1)
+const (
+	
+	X224_TPDU_CONNECTION_REQUEST = 0xE0 
+	X224_TPDU_CONNECTION_CONFIRM = 0xD0 
+	X224_TPDU_DATA               = 0xF0 
+
+	
 	X224_CR_FIXED_SIZE = 7
 )
 
-// MCS Protocol Constants (ITU-T T.125)
+
 const (
-	// MCS PDU Types (T.125 section 11.1)
+	
 	MCS_TYPE_CONNECT_INITIAL  = 0x7F65
 	MCS_TYPE_CONNECT_RESPONSE = 0x7F66
 
-	// Channel IDs
-	MCS_CHANNEL_GLOBAL = 1003 // MS-RDPBCGR section 2.2.1.3.2
-	MCS_CHANNEL_USER   = 1001 // User channel base
+	
+	MCS_CHANNEL_GLOBAL = 1003 
+	MCS_CHANNEL_USER   = 1001 
 
-	// MCS PDU Types for domain operations
+	
 	MCS_ERECT_DOMAIN_REQUEST = 0x04
 	MCS_ATTACH_USER_REQUEST  = 0x10
 	MCS_ATTACH_USER_CONFIRM  = 0x11
@@ -58,23 +58,23 @@ const (
 	MCS_SEND_DATA_INDICATION = 0x1B
 )
 
-// T.124 GCC Constants
+
 const (
-	// Conference Create Request/Response
+	
 	GCC_CONFERENCE_CREATE_REQUEST  = 0x00
 	GCC_CONFERENCE_CREATE_RESPONSE = 0x14
 )
 
-// RDP Protocol Constants (MS-RDPBCGR)
+
 const (
-	// RDP PDU Types (MS-RDPBCGR section 2.2.8.1.1.1.1)
+	
 	PDUTYPE_DEMANDACTIVEPDU  = 0x11
 	PDUTYPE_CONFIRMACTIVEPDU = 0x13
 	PDUTYPE_DEACTIVATEALLPDU = 0x16
 	PDUTYPE_DATAPDU          = 0x17
 	PDUTYPE_SERVER_REDIR_PKT = 0x1A
 
-	// Data PDU Types (MS-RDPBCGR section 2.2.8.1.1.1.2)
+	
 	PDUTYPE2_UPDATE                      = 0x02
 	PDUTYPE2_CONTROL                     = 0x14
 	PDUTYPE2_POINTER                     = 0x1B
@@ -100,29 +100,29 @@ const (
 	PDUTYPE2_STATUS_INFO_PDU             = 0x36
 	PDUTYPE2_MONITOR_LAYOUT_PDU          = 0x37
 
-	// Update PDU Types (MS-RDPBCGR section 2.2.9.1.1.3.1.1)
+	
 	UPDATETYPE_ORDERS      = 0x0000
 	UPDATETYPE_BITMAP      = 0x0001
 	UPDATETYPE_PALETTE     = 0x0002
 	UPDATETYPE_SYNCHRONIZE = 0x0003
 )
 
-// Bitmap Compression Types
+
 const (
 	BITMAP_COMPRESSION_NONE = 0x0000
 	BITMAP_COMPRESSION      = 0x0001
 )
 
-// RDP Security Constants (MS-RDPBCGR)
+
 const (
-	// Encryption Methods (MS-RDPBCGR section 2.2.1.4.3)
+	
 	ENCRYPTION_METHOD_NONE   = 0x00000000
 	ENCRYPTION_METHOD_40BIT  = 0x00000001
 	ENCRYPTION_METHOD_128BIT = 0x00000002
 	ENCRYPTION_METHOD_56BIT  = 0x00000008
 	ENCRYPTION_METHOD_FIPS   = 0x00000010
 
-	// Encryption Levels (MS-RDPBCGR section 2.2.1.4.3)
+	
 	ENCRYPTION_LEVEL_NONE              = 0x00000000
 	ENCRYPTION_LEVEL_LOW               = 0x00000001
 	ENCRYPTION_LEVEL_CLIENT_COMPATIBLE = 0x00000002
@@ -130,7 +130,7 @@ const (
 	ENCRYPTION_LEVEL_FIPS              = 0x00000004
 )
 
-// Capability Set Types (MS-RDPBCGR section 2.2.1.13.1)
+
 const (
 	CAPSTYPE_GENERAL                 = 0x0001
 	CAPSTYPE_BITMAP                  = 0x0002
@@ -159,4 +159,55 @@ const (
 	CAPSTYPE_LARGE_POINTER           = 0x001B
 	CAPSTYPE_SURFACE_COMMANDS        = 0x001C
 	CAPSTYPE_BITMAP_CODECS           = 0x001D
+)
+
+
+const (
+	RDP_RTT_REQUEST            = 0x0001
+	RDP_RTT_RESPONSE           = 0x0000
+	RDP_BW_START               = 0x0014
+	RDP_BW_PAYLOAD             = 0x0002
+	RDP_BW_STOP                = 0x0429
+	RDP_BW_RESULTS             = 0x0003
+	RDP_NETCHAR_RESULT         = 0x0840
+	RDP_NETCHAR_SYNC           = 0x0018
+)
+
+
+const (
+	RDP_RTT_REQUEST_TYPE_CONTINUOUS     = 0x0001
+	RDP_RTT_REQUEST_TYPE_CONNECTTIME    = 0x1001
+	RDP_BW_START_TYPE_CONTINUOUS        = 0x0014
+	RDP_BW_START_TYPE_CONNECTTIME       = 0x1014
+	RDP_NETCHAR_RESULTS_TYPE_CONTINUOUS = 0x0840
+	RDP_NETCHAR_RESULTS_TYPE_CONNECTTIME = 0x0880
+)
+
+
+const (
+	HEARTBEAT_PDU = 0x0001
+)
+
+
+const (
+	INITIATE_REQUEST_PROTOCOL_UDPFECR = 0x01
+	INITIATE_REQUEST_PROTOCOL_UDPFECL = 0x02
+)
+
+
+const (
+	RDSTLS_TYPE_CAPABILITIES   = 0x01
+	RDSTLS_TYPE_AUTHREQ_PWD   = 0x02
+	RDSTLS_TYPE_AUTHREQ_AUTORECONNECT = 0x03
+	RDSTLS_TYPE_AUTHRESP      = 0x04
+	
+	RDSTLS_VERSION_1 = 0x00000001
+)
+
+
+const (
+	PDUTYPE2_AUTODETECT_REQUEST   = 0x2E
+	PDUTYPE2_AUTODETECT_RESPONSE  = 0x2F
+	PDUTYPE2_HEARTBEAT           = 0x3F
+	PDUTYPE2_MULTITRANSPORT       = 0x40
 )
