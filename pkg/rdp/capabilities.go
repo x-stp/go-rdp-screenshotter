@@ -1,340 +1,240 @@
-// RDP Screenshotter - Capture screenshots from RDP servers
-// Copyright (C) 2025 - Pepijn van der Stap, pepijn@neosecurity.nl
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published
-// by the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
 package rdp
 
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 )
 
-// General Capability Set flags
-const (
-	TS_CAPS_PROTOCOLVERSION    = 0x0200
-	FASTPATH_OUTPUT_SUPPORTED  = 0x0001
-	NO_BITMAP_COMPRESSION_HDR  = 0x0400
-	LONG_CREDENTIALS_SUPPORTED = 0x0004
-	AUTORECONNECT_SUPPORTED    = 0x0008
-	ENC_SALTED_CHECKSUM        = 0x0010
-)
+// buildConfirmActivePDU emits TS_CONFIRM_ACTIVE_PDU per [MS-RDPBCGR] §2.2.1.13.2.
+// originatorId is fixed at 0x03EA (1002). sourceDescriptor carries the ASCII
+// tag mstsc.exe sends; servers don't validate the value but require non-zero
+// length. lengthCombinedCapabilities covers numberCapabilities + pad + sets.
+func buildConfirmActivePDU(shareID uint32, userID uint16) ([]byte, error) {
+	caps := new(bytes.Buffer)
+	const numberCapabilities = 13
 
-// Bitmap Capability flags
-const (
-	DRAW_ALLOW_DYNAMIC_COLOR_FIDELITY = 0x02
-	DRAW_ALLOW_COLOR_SUBSAMPLING      = 0x04
-	DRAW_ALLOW_SKIP_ALPHA             = 0x08
-)
+	writeGeneralCapabilitySet(caps)
+	writeBitmapCapabilitySet(caps)
+	writeOrderCapabilitySet(caps)
+	writeBitmapCacheCapabilitySet(caps)
+	writePointerCapabilitySet(caps)
+	writeInputCapabilitySet(caps)
+	writeBrushCapabilitySet(caps)
+	writeGlyphCacheCapabilitySet(caps)
+	writeOffscreenBitmapCacheCapabilitySet(caps)
+	writeVirtualChannelCapabilitySet(caps)
+	writeSoundCapabilitySet(caps)
+	writeShareCapabilitySet(caps)
+	writeFontCapabilitySet(caps)
 
-// Order Capability flags
-const (
-	NEGOTIATEORDERSUPPORT   = 0x0002
-	ZEROBOUNDSDELTASSUPPORT = 0x0008
-	COLORINDEXSUPPORT       = 0x0020
-	SOLIDPATTERNBRUSHONLY   = 0x0040
-	ORDERFLAGS_EXTRA_FLAGS  = 0x0080
-)
+	const sourceDescriptor = "MSTSC\x00"
 
-// Input Capability flags
-const (
-	INPUT_FLAG_SCANCODES         = 0x0001
-	INPUT_FLAG_MOUSEX            = 0x0004
-	INPUT_FLAG_FASTPATH_INPUT    = 0x0008
-	INPUT_FLAG_UNICODE           = 0x0010
-	INPUT_FLAG_FASTPATH_INPUT2   = 0x0020
-	INPUT_FLAG_UNUSED1           = 0x0040
-	INPUT_FLAG_UNUSED2           = 0x0080
-	TS_INPUT_FLAG_MOUSE_HWHEEL   = 0x0100
-	TS_INPUT_FLAG_QOE_TIMESTAMPS = 0x0200
-)
+	body := new(bytes.Buffer)
+	binary.Write(body, binary.LittleEndian, shareID)
+	binary.Write(body, binary.LittleEndian, uint16(0x03EA))
+	binary.Write(body, binary.LittleEndian, uint16(len(sourceDescriptor)))
+	binary.Write(body, binary.LittleEndian, uint16(caps.Len()+4))
+	body.WriteString(sourceDescriptor)
+	binary.Write(body, binary.LittleEndian, uint16(numberCapabilities))
+	binary.Write(body, binary.LittleEndian, uint16(0))
+	body.Write(caps.Bytes())
 
-// DemandActivePDU represents the Server Demand Active PDU (MS-RDPBCGR 2.2.1.13.1)
-type DemandActivePDU struct {
-	ShareID                    uint32
-	LengthSourceDescriptor     uint16
-	LengthCombinedCapabilities uint16
-	SourceDescriptor           string
-	NumberCapabilities         uint16
-	Pad2Octets                 uint16
-	CapabilitySets             []CapabilitySet
-	SessionID                  uint32
+	bodyBytes := body.Bytes()
+	out := new(bytes.Buffer)
+	binary.Write(out, binary.LittleEndian, uint16(len(bodyBytes)+6))
+	binary.Write(out, binary.LittleEndian, uint16(PDUTYPE_CONFIRMACTIVEPDU|0x10))
+	binary.Write(out, binary.LittleEndian, userID)
+	out.Write(bodyBytes)
+	return out.Bytes(), nil
 }
 
-// ConfirmActivePDU represents the Client Confirm Active PDU (MS-RDPBCGR 2.2.1.13.2)
-type ConfirmActivePDU struct {
-	ShareID                    uint32
-	OriginatorID               uint16
-	LengthSourceDescriptor     uint16
-	LengthCombinedCapabilities uint16
-	SourceDescriptor           string
-	NumberCapabilities         uint16
-	Pad2Octets                 uint16
-	CapabilitySets             []CapabilitySet
+// capabilitySet writes a capability set TLV header followed by body.
+func capabilitySet(buf *bytes.Buffer, capType uint16, body []byte) {
+	binary.Write(buf, binary.LittleEndian, capType)
+	binary.Write(buf, binary.LittleEndian, uint16(len(body)+4))
+	buf.Write(body)
 }
 
-// CapabilitySet represents a generic capability set
-type CapabilitySet struct {
-	Type   uint16
-	Length uint16
-	Data   []byte
+// TS_GENERAL_CAPABILITYSET per [MS-RDPBCGR] §2.2.7.1.1. extraFlags omits
+// NO_BITMAP_COMPRESSION_HDR (0x0400) so the server emits the no-compression
+// marker our bitmap decoder expects.
+func writeGeneralCapabilitySet(buf *bytes.Buffer) {
+	const (
+		FASTPATH_OUTPUT_SUPPORTED  = 0x0001
+		LONG_CREDENTIALS_SUPPORTED = 0x0004
+		AUTORECONNECT_SUPPORTED    = 0x0008
+		ENC_SALTED_CHECKSUM        = 0x0010
+	)
+	body := new(bytes.Buffer)
+	binary.Write(body, binary.LittleEndian, uint16(1))      /* osMajorType: Windows */
+	binary.Write(body, binary.LittleEndian, uint16(3))      /* osMinorType: Windows NT */
+	binary.Write(body, binary.LittleEndian, uint16(0x0200)) /* protocolVersion */
+	binary.Write(body, binary.LittleEndian, uint16(0))      /* pad2OctetsA */
+	binary.Write(body, binary.LittleEndian, uint16(0))      /* generalCompressionTypes */
+	binary.Write(body, binary.LittleEndian, uint16(FASTPATH_OUTPUT_SUPPORTED|LONG_CREDENTIALS_SUPPORTED))
+	binary.Write(body, binary.LittleEndian, uint16(0)) /* updateCapabilityFlag */
+	binary.Write(body, binary.LittleEndian, uint16(0)) /* remoteUnshareFlag */
+	binary.Write(body, binary.LittleEndian, uint16(0)) /* generalCompressionLevel */
+	binary.Write(body, binary.LittleEndian, uint8(1))  /* refreshRectSupport */
+	binary.Write(body, binary.LittleEndian, uint8(1))  /* suppressOutputSupport */
+	capabilitySet(buf, CAPSTYPE_GENERAL, body.Bytes())
 }
 
-// buildConfirmActivePDU creates a Client Confirm Active PDU
-func buildConfirmActivePDU(shareID uint32) ([]byte, error) {
-	buf := new(bytes.Buffer)
-
-	// TS_SHARECONTROLHEADER (MS-RDPBCGR 2.2.8.1.1.1.1)
-	binary.Write(buf, binary.LittleEndian, uint16(0))                             // totalLength - will be filled later
-	binary.Write(buf, binary.LittleEndian, uint16(PDUTYPE_CONFIRMACTIVEPDU|0x10)) // pduType with protocol version
-	binary.Write(buf, binary.LittleEndian, uint16(MCS_CHANNEL_GLOBAL))            // PDUSource (user channel ID)
-
-	// TS_CONFIRM_ACTIVE_PDU
-	binary.Write(buf, binary.LittleEndian, shareID)        // shareId
-	binary.Write(buf, binary.LittleEndian, uint16(0x03EA)) // originatorId (1002)
-	binary.Write(buf, binary.LittleEndian, uint16(6))      // lengthSourceDescriptor
-	binary.Write(buf, binary.LittleEndian, uint16(0))      // lengthCombinedCapabilities - will be filled later
-
-	// Source descriptor
-	buf.WriteString("RDP-GO")
-
-	// Capability sets
-	capsBuf := new(bytes.Buffer)
-
-	// Add capability sets
-	addGeneralCapabilitySet(capsBuf)
-	addBitmapCapabilitySet(capsBuf)
-	addOrderCapabilitySet(capsBuf)
-	addBitmapCacheCapabilitySet(capsBuf)
-	addPointerCapabilitySet(capsBuf)
-	addInputCapabilitySet(capsBuf)
-	addBrushCapabilitySet(capsBuf)
-	addGlyphCacheCapabilitySet(capsBuf)
-	addOffscreenCacheCapabilitySet(capsBuf)
-	addVirtualChannelCapabilitySet(capsBuf)
-	addSoundCapabilitySet(capsBuf)
-
-	// Write number of capability sets
-	binary.Write(buf, binary.LittleEndian, uint16(11)) // numberCapabilities
-	binary.Write(buf, binary.LittleEndian, uint16(0))  // pad2Octets
-
-	// Write capability sets
-	capsData := capsBuf.Bytes()
-	buf.Write(capsData)
-
-	// Update lengths
-	data := buf.Bytes()
-	binary.LittleEndian.PutUint16(data[0:2], uint16(len(data)))         // totalLength
-	binary.LittleEndian.PutUint16(data[10:12], uint16(len(capsData)+4)) // lengthCombinedCapabilities
-
-	return data, nil
+// TS_BITMAP_CAPABILITYSET per [MS-RDPBCGR] §2.2.7.1.2.
+func writeBitmapCapabilitySet(buf *bytes.Buffer) {
+	body := new(bytes.Buffer)
+	binary.Write(body, binary.LittleEndian, uint16(16))   /* preferredBitsPerPixel */
+	binary.Write(body, binary.LittleEndian, uint16(1))    /* receive1BitPerPixel */
+	binary.Write(body, binary.LittleEndian, uint16(1))    /* receive4BitsPerPixel */
+	binary.Write(body, binary.LittleEndian, uint16(1))    /* receive8BitsPerPixel */
+	binary.Write(body, binary.LittleEndian, uint16(1024)) /* desktopWidth */
+	binary.Write(body, binary.LittleEndian, uint16(768))  /* desktopHeight */
+	binary.Write(body, binary.LittleEndian, uint16(0))    /* pad2Octets */
+	binary.Write(body, binary.LittleEndian, uint16(1))    /* desktopResizeFlag */
+	binary.Write(body, binary.LittleEndian, uint16(1))    /* bitmapCompressionFlag */
+	binary.Write(body, binary.LittleEndian, uint8(0))     /* highColorFlags */
+	binary.Write(body, binary.LittleEndian, uint8(0))     /* drawingFlags */
+	binary.Write(body, binary.LittleEndian, uint16(1))    /* multipleRectangleSupport */
+	binary.Write(body, binary.LittleEndian, uint16(0))    /* pad2OctetsB */
+	capabilitySet(buf, CAPSTYPE_BITMAP, body.Bytes())
 }
 
-// addGeneralCapabilitySet adds a General Capability Set
-func addGeneralCapabilitySet(buf *bytes.Buffer) {
-	binary.Write(buf, binary.LittleEndian, uint16(CAPSTYPE_GENERAL))
-	binary.Write(buf, binary.LittleEndian, uint16(24)) // length
-
-	binary.Write(buf, binary.LittleEndian, uint16(1))                       // osMajorType (Windows)
-	binary.Write(buf, binary.LittleEndian, uint16(3))                       // osMinorType (NT)
-	binary.Write(buf, binary.LittleEndian, uint16(TS_CAPS_PROTOCOLVERSION)) // protocolVersion
-	binary.Write(buf, binary.LittleEndian, uint16(0))                       // pad2octetsA
-	binary.Write(buf, binary.LittleEndian, uint16(0))                       // generalCompressionTypes
-	binary.Write(buf, binary.LittleEndian, uint16(0))                       // extraFlags
-	binary.Write(buf, binary.LittleEndian, uint16(0))                       // updateCapabilityFlag
-	binary.Write(buf, binary.LittleEndian, uint16(0))                       // remoteUnshareFlag
-	binary.Write(buf, binary.LittleEndian, uint16(0))                       // generalCompressionLevel
-	binary.Write(buf, binary.LittleEndian, uint8(0))                        // refreshRectSupport
-	binary.Write(buf, binary.LittleEndian, uint8(0))                        // suppressOutputSupport
+// TS_ORDER_CAPABILITYSET per [MS-RDPBCGR] §2.2.7.1.3. All-zero orderSupport
+// tells the server to use plain bitmap updates only, no GDI primary orders.
+func writeOrderCapabilitySet(buf *bytes.Buffer) {
+	body := new(bytes.Buffer)
+	body.Write(make([]byte, 16))                            /* terminalDescriptor */
+	binary.Write(body, binary.LittleEndian, uint32(0))      /* pad4OctetsA */
+	binary.Write(body, binary.LittleEndian, uint16(1))      /* desktopSaveXGranularity */
+	binary.Write(body, binary.LittleEndian, uint16(20))     /* desktopSaveYGranularity */
+	binary.Write(body, binary.LittleEndian, uint16(0))      /* pad2OctetsA */
+	binary.Write(body, binary.LittleEndian, uint16(1))      /* maximumOrderLevel */
+	binary.Write(body, binary.LittleEndian, uint16(0))      /* numberFonts */
+	binary.Write(body, binary.LittleEndian, uint16(0x002A)) /* orderFlags: NEGOTIATE_ORDER_SUPPORT | ZERO_BOUNDS_DELTA_SUPPORT | COLOR_INDEX_SUPPORT */
+	body.Write(make([]byte, 32))                            /* orderSupport */
+	binary.Write(body, binary.LittleEndian, uint16(0))      /* textFlags */
+	binary.Write(body, binary.LittleEndian, uint16(0))      /* orderSupportExFlags */
+	binary.Write(body, binary.LittleEndian, uint32(0))      /* pad4OctetsB */
+	binary.Write(body, binary.LittleEndian, uint32(230400)) /* desktopSaveSize */
+	binary.Write(body, binary.LittleEndian, uint16(0))      /* pad2OctetsC */
+	binary.Write(body, binary.LittleEndian, uint16(0))      /* pad2OctetsD */
+	binary.Write(body, binary.LittleEndian, uint16(0))      /* textANSICodePage */
+	binary.Write(body, binary.LittleEndian, uint16(0))      /* pad2OctetsE */
+	capabilitySet(buf, CAPSTYPE_ORDER, body.Bytes())
 }
 
-// addBitmapCapabilitySet adds a Bitmap Capability Set
-func addBitmapCapabilitySet(buf *bytes.Buffer) {
-	binary.Write(buf, binary.LittleEndian, uint16(CAPSTYPE_BITMAP))
-	binary.Write(buf, binary.LittleEndian, uint16(28)) // length
-
-	binary.Write(buf, binary.LittleEndian, uint16(16))   // preferredBitsPerPixel
-	binary.Write(buf, binary.LittleEndian, uint16(1))    // receive1BitPerPixel
-	binary.Write(buf, binary.LittleEndian, uint16(1))    // receive4BitsPerPixel
-	binary.Write(buf, binary.LittleEndian, uint16(1))    // receive8BitsPerPixel
-	binary.Write(buf, binary.LittleEndian, uint16(1024)) // desktopWidth
-	binary.Write(buf, binary.LittleEndian, uint16(768))  // desktopHeight
-	binary.Write(buf, binary.LittleEndian, uint16(0))    // pad2octets
-	binary.Write(buf, binary.LittleEndian, uint16(1))    // desktopResizeFlag
-	binary.Write(buf, binary.LittleEndian, uint16(1))    // bitmapCompressionFlag
-	binary.Write(buf, binary.LittleEndian, uint8(0))     // highColorFlags
-	binary.Write(buf, binary.LittleEndian, uint8(0))     // drawingFlags
-	binary.Write(buf, binary.LittleEndian, uint16(1))    // multipleRectangleSupport
-	binary.Write(buf, binary.LittleEndian, uint16(0))    // pad2octetsB
+// TS_BITMAPCACHE_CAPABILITYSET (revision 1) per [MS-RDPBCGR] §2.2.7.1.4.1.
+func writeBitmapCacheCapabilitySet(buf *bytes.Buffer) {
+	body := new(bytes.Buffer)
+	body.Write(make([]byte, 24)) /* pad1..pad6 */
+	binary.Write(body, binary.LittleEndian, uint16(200))
+	binary.Write(body, binary.LittleEndian, uint16(0x600))
+	binary.Write(body, binary.LittleEndian, uint16(600))
+	binary.Write(body, binary.LittleEndian, uint16(0x1000))
+	binary.Write(body, binary.LittleEndian, uint16(1000))
+	binary.Write(body, binary.LittleEndian, uint16(0x4000))
+	capabilitySet(buf, CAPSTYPE_BITMAPCACHE, body.Bytes())
 }
 
-// addOrderCapabilitySet adds an Order Capability Set
-func addOrderCapabilitySet(buf *bytes.Buffer) {
-	binary.Write(buf, binary.LittleEndian, uint16(CAPSTYPE_ORDER))
-	binary.Write(buf, binary.LittleEndian, uint16(88)) // length
-
-	// Terminal descriptor (16 bytes)
-	buf.Write(make([]byte, 16))
-
-	binary.Write(buf, binary.LittleEndian, uint32(0))                     // pad4octetsA
-	binary.Write(buf, binary.LittleEndian, uint16(1))                     // desktopSaveXGranularity
-	binary.Write(buf, binary.LittleEndian, uint16(20))                    // desktopSaveYGranularity
-	binary.Write(buf, binary.LittleEndian, uint16(0))                     // pad2octetsA
-	binary.Write(buf, binary.LittleEndian, uint16(1))                     // maximumOrderLevel
-	binary.Write(buf, binary.LittleEndian, uint16(0))                     // numberFonts
-	binary.Write(buf, binary.LittleEndian, uint16(NEGOTIATEORDERSUPPORT)) // orderFlags
-
-	// Order support (32 bytes) - all disabled for now
-	buf.Write(make([]byte, 32))
-
-	binary.Write(buf, binary.LittleEndian, uint16(0))       // textFlags
-	binary.Write(buf, binary.LittleEndian, uint16(0))       // orderSupportExFlags
-	binary.Write(buf, binary.LittleEndian, uint32(0))       // pad4octetsB
-	binary.Write(buf, binary.LittleEndian, uint32(480*480)) // desktopSaveSize
-	binary.Write(buf, binary.LittleEndian, uint16(0))       // pad2octetsC
-	binary.Write(buf, binary.LittleEndian, uint16(0))       // pad2octetsD
-	binary.Write(buf, binary.LittleEndian, uint16(0))       // textANSICodePage
-	binary.Write(buf, binary.LittleEndian, uint16(0))       // pad2octetsE
+// TS_POINTER_CAPABILITYSET per [MS-RDPBCGR] §2.2.7.1.5.
+func writePointerCapabilitySet(buf *bytes.Buffer) {
+	body := new(bytes.Buffer)
+	binary.Write(body, binary.LittleEndian, uint16(1))  /* colorPointerFlag */
+	binary.Write(body, binary.LittleEndian, uint16(20)) /* colorPointerCacheSize */
+	binary.Write(body, binary.LittleEndian, uint16(20)) /* pointerCacheSize */
+	capabilitySet(buf, CAPSTYPE_POINTER, body.Bytes())
 }
 
-// Helper functions for other capability sets
-func addBitmapCacheCapabilitySet(buf *bytes.Buffer) {
-	binary.Write(buf, binary.LittleEndian, uint16(CAPSTYPE_BITMAPCACHE))
-	binary.Write(buf, binary.LittleEndian, uint16(40)) // length
-	buf.Write(make([]byte, 36))                        // Simplified - all zeros
+// TS_INPUT_CAPABILITYSET per [MS-RDPBCGR] §2.2.7.1.6. INPUT_FLAG_SCANCODES is
+// required. keyboardLayout 0x409 = en-US, keyboardType 4 = IBM enhanced 101/102.
+func writeInputCapabilitySet(buf *bytes.Buffer) {
+	const (
+		INPUT_FLAG_SCANCODES      = 0x0001
+		INPUT_FLAG_MOUSEX         = 0x0004
+		INPUT_FLAG_FASTPATH_INPUT = 0x0008
+	)
+	body := new(bytes.Buffer)
+	binary.Write(body, binary.LittleEndian, uint16(INPUT_FLAG_SCANCODES))
+	binary.Write(body, binary.LittleEndian, uint16(0))     /* pad2OctetsA */
+	binary.Write(body, binary.LittleEndian, uint32(0x409)) /* keyboardLayout */
+	binary.Write(body, binary.LittleEndian, uint32(4))     /* keyboardType */
+	binary.Write(body, binary.LittleEndian, uint32(0))     /* keyboardSubType */
+	binary.Write(body, binary.LittleEndian, uint32(12))    /* keyboardFunctionKey */
+	body.Write(make([]byte, 64))                           /* imeFileName */
+	capabilitySet(buf, CAPSTYPE_INPUT, body.Bytes())
 }
 
-func addPointerCapabilitySet(buf *bytes.Buffer) {
-	binary.Write(buf, binary.LittleEndian, uint16(CAPSTYPE_POINTER))
-	binary.Write(buf, binary.LittleEndian, uint16(10)) // length
-	binary.Write(buf, binary.LittleEndian, uint16(0))  // colorPointerFlag
-	binary.Write(buf, binary.LittleEndian, uint16(20)) // colorPointerCacheSize
-	binary.Write(buf, binary.LittleEndian, uint16(21)) // pointerCacheSize
+// TS_BRUSH_CAPABILITYSET per [MS-RDPBCGR] §2.2.7.1.7. Level 0 = solid colour only.
+func writeBrushCapabilitySet(buf *bytes.Buffer) {
+	body := new(bytes.Buffer)
+	binary.Write(body, binary.LittleEndian, uint32(0))
+	capabilitySet(buf, CAPSTYPE_BRUSH, body.Bytes())
 }
 
-func addInputCapabilitySet(buf *bytes.Buffer) {
-	binary.Write(buf, binary.LittleEndian, uint16(CAPSTYPE_INPUT))
-	binary.Write(buf, binary.LittleEndian, uint16(88)) // length
-
-	flags := uint16(INPUT_FLAG_SCANCODES | INPUT_FLAG_MOUSEX | INPUT_FLAG_UNICODE)
-	binary.Write(buf, binary.LittleEndian, flags)
-	binary.Write(buf, binary.LittleEndian, uint16(0))     // pad2octetsA
-	binary.Write(buf, binary.LittleEndian, uint32(0x409)) // keyboardLayout (US)
-	binary.Write(buf, binary.LittleEndian, uint32(4))     // keyboardType (IBM enhanced)
-	binary.Write(buf, binary.LittleEndian, uint32(0))     // keyboardSubType
-	binary.Write(buf, binary.LittleEndian, uint32(12))    // keyboardFunctionKey
-
-	// IME file name (64 bytes)
-	buf.Write(make([]byte, 64))
+// TS_CACHE_DEFINITION used inside the glyph cache capability set.
+func writeCacheDefinition(buf *bytes.Buffer, entries, cellSize uint16) {
+	binary.Write(buf, binary.LittleEndian, entries)
+	binary.Write(buf, binary.LittleEndian, cellSize)
 }
 
-func addBrushCapabilitySet(buf *bytes.Buffer) {
-	binary.Write(buf, binary.LittleEndian, uint16(CAPSTYPE_BRUSH))
-	binary.Write(buf, binary.LittleEndian, uint16(8)) // length
-	binary.Write(buf, binary.LittleEndian, uint32(1)) // brushSupportLevel
+// TS_GLYPHCACHE_CAPABILITYSET per [MS-RDPBCGR] §2.2.7.1.8.
+// glyphSupportLevel = GLYPH_SUPPORT_NONE; cell sizes match the mstsc defaults.
+func writeGlyphCacheCapabilitySet(buf *bytes.Buffer) {
+	body := new(bytes.Buffer)
+	writeCacheDefinition(body, 254, 4)
+	writeCacheDefinition(body, 254, 4)
+	writeCacheDefinition(body, 254, 8)
+	writeCacheDefinition(body, 254, 8)
+	writeCacheDefinition(body, 254, 16)
+	writeCacheDefinition(body, 254, 32)
+	writeCacheDefinition(body, 254, 64)
+	writeCacheDefinition(body, 254, 128)
+	writeCacheDefinition(body, 254, 256)
+	writeCacheDefinition(body, 64, 2048)
+	writeCacheDefinition(body, 256, 256)               /* fragCache */
+	binary.Write(body, binary.LittleEndian, uint16(0)) /* glyphSupportLevel */
+	binary.Write(body, binary.LittleEndian, uint16(0)) /* pad2Octets */
+	capabilitySet(buf, CAPSTYPE_GLYPHCACHE, body.Bytes())
 }
 
-func addGlyphCacheCapabilitySet(buf *bytes.Buffer) {
-	binary.Write(buf, binary.LittleEndian, uint16(CAPSTYPE_GLYPHCACHE))
-	binary.Write(buf, binary.LittleEndian, uint16(52)) // length
-
-	// 10 cache entries (4 bytes each)
-	for i := 0; i < 10; i++ {
-		binary.Write(buf, binary.LittleEndian, uint16(254)) // CacheEntries
-		binary.Write(buf, binary.LittleEndian, uint16(4))   // CacheMaximumCellSize
-	}
-
-	binary.Write(buf, binary.LittleEndian, uint32(0)) // FragCache
-	binary.Write(buf, binary.LittleEndian, uint16(4)) // GlyphSupportLevel
-	binary.Write(buf, binary.LittleEndian, uint16(0)) // pad2octets
+// TS_OFFSCREEN_CAPABILITYSET per [MS-RDPBCGR] §2.2.7.1.9. Level 0 disables.
+func writeOffscreenBitmapCacheCapabilitySet(buf *bytes.Buffer) {
+	body := new(bytes.Buffer)
+	binary.Write(body, binary.LittleEndian, uint32(0)) /* offscreenSupportLevel */
+	binary.Write(body, binary.LittleEndian, uint16(0)) /* offscreenCacheSize */
+	binary.Write(body, binary.LittleEndian, uint16(0)) /* offscreenCacheEntries */
+	capabilitySet(buf, CAPSTYPE_OFFSCREENCACHE, body.Bytes())
 }
 
-func addOffscreenCacheCapabilitySet(buf *bytes.Buffer) {
-	binary.Write(buf, binary.LittleEndian, uint16(CAPSTYPE_OFFSCREENCACHE))
-	binary.Write(buf, binary.LittleEndian, uint16(12)) // length
-	binary.Write(buf, binary.LittleEndian, uint32(0))  // offscreenSupportLevel
-	binary.Write(buf, binary.LittleEndian, uint16(0))  // offscreenCacheSize
-	binary.Write(buf, binary.LittleEndian, uint16(0))  // offscreenCacheEntries
+// TS_VIRTUALCHANNEL_CAPABILITYSET per [MS-RDPBCGR] §2.2.7.1.10. flags=0 means
+// no compression supported; VCChunkSize is optional in v1.
+func writeVirtualChannelCapabilitySet(buf *bytes.Buffer) {
+	body := new(bytes.Buffer)
+	binary.Write(body, binary.LittleEndian, uint32(0)) /* flags */
+	binary.Write(body, binary.LittleEndian, uint32(0)) /* VCChunkSize */
+	capabilitySet(buf, CAPSTYPE_VIRTUALCHANNEL, body.Bytes())
 }
 
-func addVirtualChannelCapabilitySet(buf *bytes.Buffer) {
-	binary.Write(buf, binary.LittleEndian, uint16(CAPSTYPE_VIRTUALCHANNEL))
-	binary.Write(buf, binary.LittleEndian, uint16(12)) // length
-	binary.Write(buf, binary.LittleEndian, uint32(1))  // flags (VCCAPS_COMPR_SC)
-	binary.Write(buf, binary.LittleEndian, uint32(0))  // VCChunkSize (optional)
+// TS_SOUND_CAPABILITYSET per [MS-RDPBCGR] §2.2.7.1.11.
+func writeSoundCapabilitySet(buf *bytes.Buffer) {
+	body := new(bytes.Buffer)
+	binary.Write(body, binary.LittleEndian, uint16(0)) /* soundFlags */
+	binary.Write(body, binary.LittleEndian, uint16(0)) /* pad2OctetsA */
+	capabilitySet(buf, CAPSTYPE_SOUND, body.Bytes())
 }
 
-func addSoundCapabilitySet(buf *bytes.Buffer) {
-	binary.Write(buf, binary.LittleEndian, uint16(CAPSTYPE_SOUND))
-	binary.Write(buf, binary.LittleEndian, uint16(8)) // length
-	binary.Write(buf, binary.LittleEndian, uint16(0)) // soundFlags
-	binary.Write(buf, binary.LittleEndian, uint16(0)) // pad2octetsA
+// TS_SHARE_CAPABILITYSET per [MS-RDPBCGR] §2.2.7.2.4. nodeId is 0 from client.
+func writeShareCapabilitySet(buf *bytes.Buffer) {
+	body := new(bytes.Buffer)
+	binary.Write(body, binary.LittleEndian, uint16(0))
+	binary.Write(body, binary.LittleEndian, uint16(0))
+	capabilitySet(buf, CAPSTYPE_SHARE, body.Bytes())
 }
 
-// parseDemandActivePDU parses a Server Demand Active PDU
-func parseDemandActivePDU(data []byte) (*DemandActivePDU, error) {
-	if len(data) < 20 {
-		return nil, fmt.Errorf("demand active PDU too short: %d bytes", len(data))
-	}
-
-	pdu := &DemandActivePDU{}
-	r := bytes.NewReader(data)
-
-	// Read fixed fields
-	binary.Read(r, binary.LittleEndian, &pdu.ShareID)
-	binary.Read(r, binary.LittleEndian, &pdu.LengthSourceDescriptor)
-	binary.Read(r, binary.LittleEndian, &pdu.LengthCombinedCapabilities)
-
-	// Read source descriptor
-	if pdu.LengthSourceDescriptor > 0 {
-		srcDesc := make([]byte, pdu.LengthSourceDescriptor)
-		r.Read(srcDesc)
-		pdu.SourceDescriptor = string(srcDesc)
-	}
-
-	// Read capability sets header
-	binary.Read(r, binary.LittleEndian, &pdu.NumberCapabilities)
-	binary.Read(r, binary.LittleEndian, &pdu.Pad2Octets)
-
-	// Parse capability sets
-	pdu.CapabilitySets = make([]CapabilitySet, 0, pdu.NumberCapabilities)
-	for i := uint16(0); i < pdu.NumberCapabilities; i++ {
-		var capSet CapabilitySet
-		if err := binary.Read(r, binary.LittleEndian, &capSet.Type); err != nil {
-			break
-		}
-		if err := binary.Read(r, binary.LittleEndian, &capSet.Length); err != nil {
-			break
-		}
-
-		// Read capability data (length includes the 4-byte header)
-		if capSet.Length >= 4 {
-			capSet.Data = make([]byte, capSet.Length-4)
-			r.Read(capSet.Data)
-		}
-
-		pdu.CapabilitySets = append(pdu.CapabilitySets, capSet)
-
-		// Log capability type for debugging
-		fmt.Printf("  Capability: Type=0x%04X, Length=%d\n", capSet.Type, capSet.Length)
-	}
-
-	// Read session ID if present
-	if r.Len() >= 4 {
-		binary.Read(r, binary.LittleEndian, &pdu.SessionID)
-	}
-
-	return pdu, nil
+// TS_FONT_CAPABILITYSET per [MS-RDPBCGR] §2.2.7.2.5.
+func writeFontCapabilitySet(buf *bytes.Buffer) {
+	body := new(bytes.Buffer)
+	binary.Write(body, binary.LittleEndian, uint16(1)) /* FONTSUPPORT_FONTLIST */
+	binary.Write(body, binary.LittleEndian, uint16(0))
+	capabilitySet(buf, CAPSTYPE_FONT, body.Bytes())
 }
