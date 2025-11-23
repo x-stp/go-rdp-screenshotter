@@ -1,151 +1,186 @@
-# RDP Screenshotter (Go)
+# rdp-screenshotter-go
 
-A lightweight RDP (Remote Desktop Protocol) client written in Go. 
-Capture screenshots from RDP servers without requiring full auth.
-
-## Features
-
-- Minimal RDP protocol implementation focused on screenshot capture
-- Support for multiple targets from a file
-- Configurable connection timeout
-- No external dependencies (pure Go implementation)
-
-## LT wishlist
-- Support for CredSSP/NLA authentication
- - this needs to be worked out in `pkg/rdp/security.go`
-    - FreeRDP/FreeRDP, rdesktop, citronneur/rdp-rs etc.
-     - https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-cssp/6aac4dea-08ef-47a6-8747-22ea7f6d8685
-      -https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-cssp/9664994d-0784-4659-b85b-83b8d54c2336
-- Support for RDP compression - spec:
-      -https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/a02c7496-2eb4-45d4-b8d1-99e98e61fe21 [rfc 2118]
-- Add proper bitmap to PNG conversion 
-- Implement RDP 8+ features
-- Add concurrency
-- Unit tests
-
-## Installation
-
-```bash
-go install github.com/x-stp/rdp-screenshotter-go@latest
-```
-
-Or build from source:
-
-```bash
-git clone https://x-stp.com/yourusername/rdp-screenshotter-go
-cd rdp-screenshotter-go
-go build -o rdp-screenshotter ./cmd/main.go
-```
-
-## Usage
-
-```ksh
-./rdp-screenshotter -targets target.txt
-```
-
-### Command Line Options
+Pure-Go RDP client built for one job: open an RDP connection, walk the
+protocol all the way to the first server bitmap update, and dump it to a PNG.
+No cgo, no FreeRDP shell-out, no XServer.
 
 ```
--targets string
-    File containing RDP targets (one per line) (default "target.txt")
--timeout duration
-    Connection timeout (default 10s)
--username string
-    Username for RDP cookie (optional)
--output string
-    Output directory for screenshots (default "screenshots")
+go install github.com/x-stp/rdp-screenshotter-go/cmd/rdp-screenshotter@latest
+echo 1.2.3.4:3389 > targets.txt
+rdp-screenshotter -targets targets.txt -workers 8 -output screenshots/
 ```
 
-### Example
+Against an arbitrary slice of public Windows servers (a fresh Shodan
+`port:3389 has_screenshot:true` dump), restricted to the hosts that negotiate
+without NLA, it captures roughly **86%** — from Server 2008 through Server
+2022 and Windows 10/11. Standard RDP Security, TLS-only, and modern
+Server 2012R2+ hosts all work; NLA-required servers work when you supply
+`-username` / `-password` / `-domain` (NTLMv2 or, with `-kerberos`, an AP-REQ
+from your credential cache).
 
-```bash
-# Capture screenshots with custom timeout and output directory
-./rdp-screenshotter -targets servers.txt -timeout 30s -output ./captures
+> Getting the modern-server tier working hinged on emitting a coherent
+> `TS_UD_CS_CORE` ([MS-RDPBCGR] §2.2.1.3.2): Server 2012R2+ RST the
+> connection right after MCS Connect Initial if the color-depth / capability
+> fields don't line up, where Server 2008 accepts almost anything.
 
-# With username cookie
-./rdp-screenshotter -targets target.txt -username admin
+## CLI
+
+```
+rdp-screenshotter [flags]
+
+  -targets       file with one host[:port] per line, # comments allowed (default "target.txt")
+  -output        directory to drop PNGs into, created if missing      (default "screenshots")
+  -workers       concurrent connections                                (default 5)
+  -timeout       per-connection wall budget (hard cap is 3x this)      (default 10s)
+  -username      RDP cookie / NLA username                             (optional)
+  -password      NLA password (enables HYBRID negotiation)             (optional)
+  -domain        NLA / Kerberos realm                                  (optional)
+  -log-level     trace|debug|info|warn|error                           (default warn)
+  -anonymous     offer PROTOCOL_HYBRID + run anonymous CredSSP/NTLMv2  (off by default)
+  -kerberos      advertise Kerberos V5 in CredSSP, fall back to NTLM   (off by default)
+  -krb5-ccache   Kerberos credential cache path ($KRB5CCNAME default)  (optional)
+  -krb5-config   krb5.conf path ($KRB5_CONFIG default)                 (optional)
+  -output-format text | json per-target result lines                  (default text)
 ```
 
-## Protocol Support
+`-anonymous` is the trick Shodan and similar mass-scanners use to paint the
+lock screen on NLA-required Windows. It runs the CredSSP/NTLMSSP exchange
+with the [MS-NLMP] §3.1.5.1.2 anonymous AUTHENTICATE_MESSAGE (1-byte 0x00
+LmChallengeResponse, empty NtChallengeResponse, zero session key); if the
+server's GINA renders the lock screen before tearing down the channel we get
+a one-shot capture. Trade-off: forcing HYBRID into the X.224 NegReq makes
+modern Windows hosts that would otherwise have answered with PROTOCOL_RDP or
+PROTOCOL_SSL pick HYBRID instead, and most of them have NTLM disabled at the
+SSPI layer (`SEC_E_INVALID_TOKEN`), so the captured-host count drops. Use
+`-anonymous` when you specifically need NLA-gated targets and don't mind
+losing the legacy-NLA-off ones in the same run.
 
-The implementation supports:
+`-kerberos` runs the CredSSP exchange with an RFC 4121 GSS-Kerberos AP-REQ
+(SPN `TERMSRV/<host>`) built from your credential cache — populate it with
+`kinit` first. Any Kerberos failure (no ccache, KDC unreachable, KRB-ERROR)
+transparently falls back to the NTLM path, so the flag is safe to leave on
+for mixed AD / standalone runs.
 
-- TPKT (RFC 1006) transport
-- X.224 connection establishment
-- Basic MCS (T.125) channel management
-- RDP security negotiation
-- Basic RDP connection sequence
+`-output-format json` emits one JSON object per target on stdout
+(`{"index","total","target","status","file","error","duration_ms"}`) so
+results pipe straight into `jq`. `text` (default) is the human-readable
+`[n/total] OK host -> file` form.
 
-### Security Modes
+`screenshots/HOST_PORT.png` is written for every successful capture. Per-target
+result lines go to **stdout**; protocol logs go to **stderr** at the level you
+pick. Pipe stdout to a file, leave stderr on the terminal. No single host can
+pin a worker: each target is capped at 3x `-timeout` by a watchdog that closes
+the connection on expiry.
 
-The client attempts to negotiate the following security modes:
-- Standard RDP Security
-- TLS/SSL Security
-- Network Level Authentication (NLA) - detection only
+## Library
 
-**Note**: Currently, only standard RDP security is fully implemented. 
+The whole thing is also usable as a library:
 
-Servers requiring TLS or NLA will be detected but connection will fail, cert chain not logged yet.
+```go
+package main
 
-## Limitations
+import (
+    "fmt"
+    "os"
+    "time"
 
-- Only captures the initial screen (no interaction / mouse)
-- Limited to servers allowing standard RDP security
-- No support for CredSSP/NLA authentication (see LT wishlist)
-- Basic bitmap format support only
-- No RDP compression support
+    "github.com/rs/zerolog"
+    "github.com/x-stp/rdp-screenshotter-go/pkg/rdp"
+)
 
+func main() {
+    rdp.SetLogLevel(zerolog.InfoLevel)
 
-### Project Structure
+    client, err := rdp.NewClient("1.2.3.4:3389", &rdp.ClientOptions{
+        Timeout: 15 * time.Second,
+    })
+    if err != nil { panic(err) }
+    defer client.Close()
 
-```ksh
-|----------------------------------------------------------|
-|── pkg/                                                   |
-|   └── rdp/                                               |
-|       ├── client.go        # RDP client implementation   |
-|       ├── constants.go     # Protocol constants          |
-|       ├── tpkt.go         # TPKT layer                   |
-|       ├── x224.go         # X.224 layer                  |
-│       ├── mcs.go          # MCS layer                    |
-│       ├── security.go     # Security functions           |
-│       ├── pdu.go          # PDU builders/parsers         |
-│       ├── bitmap.go       # Bitmap handling              |
-│       └── client_test.go  # Unit tests                   |
-|----------------------------------------------------------|
+    png, err := client.Screenshot()
+    if err != nil { panic(err) }
+    _ = os.WriteFile("shot.png", png, 0o644)
+    fmt.Printf("captured %d bytes\n", len(png))
+}
 ```
 
-## DISCLAIMER
+`rdp.SetLogger(zerolog.Nop())` silences the package entirely. `rdp.SetLogger`,
+`rdp.SetLogOutput` and `rdp.SetLogLevel` are the only knobs the library
+exposes for logging.
 
-This tool is designed for authorized security testing and system administration only. 
+## Architecture
 
-**Important**:
-- Only use on systems you own or have explicit permission to test
-- The tool may trigger security alerts on target systems
-- RDP sessions on Win usually go to event viewer. 
-- Modern RDP servers may require NLA which this tool doesn't yet support
+```
+cmd/rdp-screenshotter/   concurrent CLI worker pool around pkg/rdp
+cmd/credssp-test/        single-target NLA diagnostic harness
+pkg/rdp/                 RDP protocol implementation
+  client.go              Client + ClientOptions, Screenshot() orchestration
+  connect.go             X.224 + TLS + CredSSP handshake, MCS domain join,
+                         Demand/Confirm Active, Client Info PDU
+  secure.go              Standard RDP MAC + RC4 wrap, basic security header
+  read.go                slow/fast-path receive, reactivation, bitmap compositing
+  log.go                 package zerolog.Logger + level helpers
+  tpkt.go                RFC 1006 packet framing
+  x224.go                ITU-T X.224 connection negotiation + neg failure retry
+  mcs.go                 T.125 MCS channel management, GCC client/server data
+  per/per.go             ITU-T X.691 PER primitives (+ round-trip tests)
+  security.go            session key derivation, raw-RSA exchange, MAC, RC4
+  credssp.go             CredSSP/NLA orchestration: TSRequest, SPNEGO (MS-CSSP)
+  ntlm.go                NTLMv2 negotiate/authenticate/seal (MS-NLMP)
+  kerberos.go            GSS-Kerberos AP-REQ via gokrb5 (RFC 4121 in MS-CSSP)
+  spnego.go              SPNEGO token wrapping (RFC 4178)
+  pdu.go                 share control / share data PDU builders + parsers
+  capabilities.go        Confirm Active capability negotiation
+  licensing.go           licensing PDU dispatch + STATUS_VALID_CLIENT alert
+  license_protocol.go    full NEW_LICENSE_REQUEST / PLATFORM_CHALLENGE_RESPONSE
+                         dance per [MS-RDPELE]
+  tls.go                 TLS upgrade via zcrypto/tls
+pkg/bitmap/              bitmap pixel decoders
+  bitmap.go              15/16/24/32 bpp -> PNG, bottom-up DIB row flip
+  rle.go                 RDP RLE bitmap decompressor (MS-RDPBCGR §3.1.9)
+```
 
-### TODO
+## Protocol coverage
 
-- [ ] Add decent TLSv1.0-TLS1.2 support
-- [ ] Support RDP compression
-- [ ] Add proper bitmap to PNG conversion
-- [ ] Support 8b bitmap as most RDP services are cheap
-- [ ] Implement RDP 8+ features
-- [ ] CredSSP/NLA authentication
-- [ ] Add concurrent target processing
+| Feature                                 | Status |
+|-----------------------------------------|--------|
+| X.224 negotiation + RDP_NEG_FAILURE retry | works |
+| Modern-server MCS activation (Server 2012R2 .. 2022, Win10/11) | works |
+| Deactivate-All / reactivation sequence   | works |
+| Standard RDP security (RC4, 40/56/128-bit) | works |
+| Server X.509 chain + proprietary cert     | works |
+| TLS-only transport                       | works |
+| NLA / CredSSP via NTLMv2 + SPNEGO        | works |
+| Kerberos via CredSSP (AP-REQ, NTLM fallback) | works |
+| Full RDP licensing (NEW_LICENSE_REQUEST, PLATFORM_CHALLENGE_RESPONSE) | works |
+| Slow-path bitmap updates (15/16/24/32 bpp) | works |
+| Fast-path output PDUs                    | works |
+| Bitmap RLE decompression                 | works |
+| RemoteFX / Graphics Pipeline (RDPGFX)    | not implemented |
+| Dynamic virtual channels                 | not implemented |
 
+## Specifications referenced
 
-## Enjoy obscure protocol specs 
+- [MS-RDPBCGR](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/) -- RDP Basic Connectivity & Graphics Remoting
+- [MS-RDPELE](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpele/) -- RDP Licensing Extension
+- [MS-CSSP](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-cssp/) -- CredSSP
+- [MS-NLMP](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-nlmp/) -- NTLM
+- [ITU-T T.125](https://www.itu.int/rec/T-REC-T.125) / [T.124](https://www.itu.int/rec/T-REC-T.124) -- MCS / GCC
+- [ITU-T X.224](https://www.itu.int/rec/T-REC-X.224) / [X.691](https://www.itu.int/rec/T-REC-X.691) -- COTP / PER
+- [RFC 1006](https://www.rfc-editor.org/rfc/rfc1006) -- TPKT over TCP
+- [RFC 4178](https://www.rfc-editor.org/rfc/rfc4178) (SPNEGO) / [RFC 4121](https://www.rfc-editor.org/rfc/rfc4121) (GSS-Kerberos)
+- [RFC 5246](https://www.rfc-editor.org/rfc/rfc5246) (TLS 1.2) / [RFC 6066](https://www.rfc-editor.org/rfc/rfc6066) (SNI)
 
-- FreeRDP project for protocol insights.
-- ITU-T X.680;
-- RFC 1155;
-- ITU-T X.690; 
-- RFC 6025;
-- Microsoft RDP documentation (MS-RDPBCGR);
+## Building / testing
 
-## License
+```
+make build      # or: go build ./...
+make test       # go test -race ./...
+make lint       # go vet + golangci-lint (config in .golangci.yml)
+```
 
-This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0) - see the LICENSE file for details.
+Requires Go 1.25+. The package works around Go's `crypto/rsa`
+minimum-key-size guard explicitly, since RDP Standard Security exchange keys
+are 512-bit ([MS-RDPBCGR] §5.3.4).
 
-The AGPL license ensures that any modifications to this software, including when used as a network service, must be made available under the same license terms.
+See [TODO.md](TODO.md) for known limitations and the next slice of work.
