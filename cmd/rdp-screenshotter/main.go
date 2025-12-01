@@ -1,19 +1,3 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 package main
 
 import (
@@ -30,24 +14,13 @@ import (
 )
 
 func main() {
-	var (
-		targetFile = flag.String("targets", "target.txt", "File containing RDP targets (one per line)")
-		timeout    = flag.Duration("timeout", 10*time.Second, "Connection timeout")
-		username   = flag.String("username", "", "Username for RDP cookie (optional)")
-		password   = flag.String("password", "", "Password for NLA authentication (optional)")
-		domain     = flag.String("domain", "", "Domain for NLA authentication (optional)")
-		outputDir  = flag.String("output", "screenshots", "Output directory for screenshots")
-		workers    = flag.Int("workers", 5, "Number of concurrent workers")
-	)
-	flag.Parse()
+	config := parseFlags()
 
-	
-	if err := os.MkdirAll(*outputDir, 0755); err != nil {
+	if err := os.MkdirAll(config.outputDir, 0755); err != nil {
 		log.Fatalf("Failed to create output directory: %v", err)
 	}
 
-	
-	targets, err := readTargets(*targetFile)
+	targets, err := readTargets(config.targetFile)
 	if err != nil {
 		log.Fatalf("Failed to read targets: %v", err)
 	}
@@ -57,22 +30,44 @@ func main() {
 	}
 
 	fmt.Printf("Found %d targets\n", len(targets))
-	fmt.Printf("Using %d concurrent workers\n", *workers)
+	fmt.Printf("Using %d concurrent workers\n", config.workers)
 
-	
+	runWorkers(targets, config)
+}
+
+type config struct {
+	targetFile string
+	timeout    time.Duration
+	username   string
+	password   string
+	domain     string
+	outputDir  string
+	workers    int
+}
+
+func parseFlags() config {
+	var c config
+	flag.StringVar(&c.targetFile, "targets", "target.txt", "File containing RDP targets (one per line)")
+	flag.DurationVar(&c.timeout, "timeout", 10*time.Second, "Connection timeout")
+	flag.StringVar(&c.username, "username", "", "Username for RDP cookie (optional)")
+	flag.StringVar(&c.password, "password", "", "Password for NLA authentication (optional)")
+	flag.StringVar(&c.domain, "domain", "", "Domain for NLA authentication (optional)")
+	flag.StringVar(&c.outputDir, "output", "screenshots", "Output directory for screenshots")
+	flag.IntVar(&c.workers, "workers", 5, "Number of concurrent workers")
+	flag.Parse()
+	return c
+}
+
+func runWorkers(targets []string, cfg config) {
 	targetChan := make(chan targetWork, len(targets))
 	resultChan := make(chan targetResult, len(targets))
-
-	
 	var wg sync.WaitGroup
 
-	
-	for i := 0; i < *workers; i++ {
+	for i := 0; i < cfg.workers; i++ {
 		wg.Add(1)
-		go worker(i+1, targetChan, resultChan, &wg, *timeout, *username, *password, *domain, *outputDir)
+		go worker(i+1, targetChan, resultChan, &wg, cfg)
 	}
 
-	
 	for i, target := range targets {
 		targetChan <- targetWork{
 			index:  i + 1,
@@ -82,16 +77,18 @@ func main() {
 	}
 	close(targetChan)
 
-	
 	go func() {
 		wg.Wait()
 		close(resultChan)
 	}()
 
-	
+	processResults(resultChan)
+}
+
+func processResults(results <-chan targetResult) {
 	successCount := 0
 	failCount := 0
-	for result := range resultChan {
+	for result := range results {
 		if result.success {
 			successCount++
 			fmt.Printf("[%d/%d] ✓ %s - Screenshot saved to %s\n",
@@ -102,7 +99,6 @@ func main() {
 				result.work.index, result.work.total, result.work.target, result.err)
 		}
 	}
-
 	fmt.Printf("\nCompleted: %d successful, %d failed\n", successCount, failCount)
 }
 
@@ -119,23 +115,21 @@ type targetResult struct {
 	err      error
 }
 
-func worker(id int, targets <-chan targetWork, results chan<- targetResult, wg *sync.WaitGroup,
-	timeout time.Duration, username string, password string, domain string, outputDir string) {
+func worker(id int, targets <-chan targetWork, results chan<- targetResult, wg *sync.WaitGroup, cfg config) {
 	defer wg.Done()
 
 	for work := range targets {
-		
+
 		opts := &rdp.ClientOptions{
-			Timeout:  timeout,
-			Username: username,
-			Password: password,
-			Domain:   domain,
-			EnableAutoDetect: true,  
-			EnableHeartbeat: true,   
+			Timeout:          cfg.timeout,
+			Username:         cfg.username,
+			Password:         cfg.password,
+			Domain:           cfg.domain,
+			EnableAutoDetect: true,
+			EnableHeartbeat:  true,
 		}
 
-		
-		filename, err := captureScreenshot(work.target, opts, outputDir)
+		filename, err := captureScreenshot(work.target, opts, cfg.outputDir)
 
 		results <- targetResult{
 			work:     work,
@@ -157,9 +151,9 @@ func readTargets(filename string) ([]string, error) {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		
+
 		if line != "" && !strings.HasPrefix(line, "#") {
-			
+
 			if !strings.Contains(line, ":") {
 				line += ":3389"
 			}
@@ -171,20 +165,18 @@ func readTargets(filename string) ([]string, error) {
 }
 
 func captureScreenshot(target string, opts *rdp.ClientOptions, outputDir string) (string, error) {
-	
+
 	client, err := rdp.NewClient(target, opts)
 	if err != nil {
 		return "", fmt.Errorf("failed to create client: %w", err)
 	}
 	defer client.Close()
 
-	
 	imageData, err := client.Screenshot()
 	if err != nil {
 		return "", fmt.Errorf("failed to capture screenshot: %w", err)
 	}
 
-	
 	filename := fmt.Sprintf("%s/%s.png", outputDir, sanitizeFilename(target))
 	if err := saveScreenshot(filename, imageData); err != nil {
 		return "", fmt.Errorf("failed to save screenshot: %w", err)
@@ -194,7 +186,7 @@ func captureScreenshot(target string, opts *rdp.ClientOptions, outputDir string)
 }
 
 func sanitizeFilename(s string) string {
-	
+
 	replacer := strings.NewReplacer(
 		":", "_",
 		"/", "_",
@@ -210,7 +202,6 @@ func sanitizeFilename(s string) string {
 }
 
 func saveScreenshot(filename string, data []byte) error {
-	
-	
+
 	return os.WriteFile(filename, data, 0644)
 }

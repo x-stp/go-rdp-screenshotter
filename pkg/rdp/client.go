@@ -1,4 +1,3 @@
-
 package rdp
 
 import (
@@ -20,6 +19,7 @@ type Client struct {
 	x224SrcRef         uint16
 	mcsUserID          uint16
 	ioChannel          uint16
+	shareID            uint32
 	serverSecurityData *SecurityData
 	clientRandom       []byte
 	sessionKeys        *SessionKeys
@@ -30,13 +30,11 @@ type Client struct {
 	unreadData         []byte
 	screenshot         []byte
 	lastServerPDU      []byte
-	
-	autoDetectManager  *AutoDetectManager
-	heartbeatManager   *HeartbeatManager
-	
-	tlsCertificate     []byte
-	
-	ntlmSession        *ntlmSession
+
+	autoDetectManager *AutoDetectManager
+	heartbeatManager  *HeartbeatManager
+
+	tlsCertificate []byte
 }
 
 type ClientOptions struct {
@@ -44,15 +42,15 @@ type ClientOptions struct {
 	Username string
 	Password string
 	Domain   string
-	
-	EnableAutoDetect    bool
-	EnableHeartbeat     bool
-	HeartbeatInterval   time.Duration
+
+	EnableAutoDetect  bool
+	EnableHeartbeat   bool
+	HeartbeatInterval time.Duration
 }
 
 func DefaultClientOptions() *ClientOptions {
 	return &ClientOptions{
-		Timeout: 10 * time.Second,
+		Timeout:           10 * time.Second,
 		EnableAutoDetect:  false,
 		EnableHeartbeat:   false,
 		HeartbeatInterval: 30 * time.Second,
@@ -74,7 +72,7 @@ func NewClient(target string, opts *ClientOptions) (*Client, error) {
 		target: target,
 		opts:   opts,
 	}
-	
+
 	if opts.EnableAutoDetect {
 		client.autoDetectManager = NewAutoDetectManager(client)
 	}
@@ -98,7 +96,7 @@ func (c *Client) establishX224Connection() error {
 	fmt.Printf("========================================\n")
 	fmt.Printf("Target: %s\n", c.target)
 	fmt.Printf("Username: %s\n\n", c.opts.Username)
-	
+
 	if err := c.sendX224ConnectionRequest(c.opts.Username); err != nil {
 		return err
 	}
@@ -118,13 +116,11 @@ func (c *Client) establishX224Connection() error {
 	return nil
 }
 
-
 func (c *Client) Screenshot() ([]byte, error) {
 	fmt.Printf("\n========================================\n")
 	fmt.Printf("=== STARTING RDP SCREENSHOT CAPTURE ===\n")
 	fmt.Printf("========================================\n\n")
-	
-	
+
 	if isNLA(c.negotiatedProtocol) {
 		fmt.Printf("Server requires NLA (protocol: 0x%08x)\n", c.negotiatedProtocol)
 		if err := c.PerformCredSSPAuth(); err != nil {
@@ -134,18 +130,16 @@ func (c *Client) Screenshot() ([]byte, error) {
 		fmt.Println("Continuing with RDP handshake...")
 	} else {
 		fmt.Printf("Server negotiated protocol: 0x%08x (NLA not required)\n", c.negotiatedProtocol)
-		
+
 		if c.negotiatedProtocol == PROTOCOL_RDP && c.serverSecurityData != nil {
-			fmt.Printf("Note: Server using standard RDP with security method=0x%08x, level=0x%08x\n", 
+			fmt.Printf("Note: Server using standard RDP with security method=0x%08x, level=0x%08x\n",
 				c.serverSecurityData.EncryptionMethod, c.serverSecurityData.EncryptionLevel)
 		}
-		
-		
-		forceCredSSPTest := false 
+
+		forceCredSSPTest := false
 		if forceCredSSPTest && c.negotiatedProtocol == PROTOCOL_RDP {
 			fmt.Printf("\nTESTING: Forcing CredSSP authentication even though server negotiated standard RDP\n")
-			
-			
+
 			if !c.tlsEnabled {
 				fmt.Printf("Upgrading to TLS for CredSSP test...\n")
 				host, _, _ := net.SplitHostPort(c.target)
@@ -155,7 +149,7 @@ func (c *Client) Screenshot() ([]byte, error) {
 					fmt.Printf("TLS upgrade successful\n")
 				}
 			}
-			
+
 			if c.tlsEnabled {
 				if err := c.PerformCredSSPAuth(); err != nil {
 					fmt.Printf("CredSSP test failed: %v\n\n", err)
@@ -173,7 +167,6 @@ func (c *Client) Screenshot() ([]byte, error) {
 		return nil, err
 	}
 
-	
 	if c.serverSecurityData != nil && c.serverSecurityData.EncryptionMethod != ENCRYPTION_METHOD_NONE {
 		if err := c.sendSecurityExchange(); err != nil {
 			return nil, err
@@ -183,105 +176,103 @@ func (c *Client) Screenshot() ([]byte, error) {
 	if err := c.performMCSDomainJoin(); err != nil {
 		return nil, err
 	}
-	
-	
+
 	if c.screenshot != nil {
 		return c.screenshot, nil
 	}
 
-	
 	fmt.Println("Entering licensing/capability exchange phase...")
-	
-	
+
 	c.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	data, err := c.readSecurePayload()
 	c.conn.SetReadDeadline(time.Time{})
-	
+
 	if err != nil {
 		fmt.Printf("Warning: Failed to read post-MCS PDU: %v\n", err)
-		
+
 		return c.attemptDirectScreenshot()
 	}
-	
-	
+
 	if len(data) >= 4 {
-		flags := binary.LittleEndian.Uint16(data[0:2])
-		if flags&SEC_LICENSE_PKT != 0 {
-			fmt.Println("Received licensing PDU")
-			
-			if err := c.sendLicenseErrorAlert(STATUS_VALID_CLIENT); err != nil {
-				fmt.Printf("Warning: Failed to send license error alert: %v\n", err)
-			}
-			
-			
-			c.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-			data, err = c.readSecurePayload()
-			c.conn.SetReadDeadline(time.Time{})
-			if err != nil {
-				fmt.Printf("Warning: Failed to read post-licensing PDU: %v\n", err)
-				return c.attemptDirectScreenshot()
+		// Check if it is a FastPath PDU first
+		if (data[0] & 0x3) == 0 {
+			// It's FastPath, likely Demand Active sent via FastPath (unlikely) or just some update?
+			// Usually Demand Active is Slow Path.
+			// Proceed to check for Slow Path.
+		} else {
+			flags := binary.LittleEndian.Uint16(data[0:2])
+			if flags&SEC_LICENSE_PKT != 0 {
+				fmt.Println("Received licensing PDU")
+
+				if err := c.sendLicenseErrorAlert(STATUS_VALID_CLIENT); err != nil {
+					fmt.Printf("Warning: Failed to send license error alert: %v\n", err)
+				}
+
+				c.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+				data, err = c.readSecurePayload()
+				c.conn.SetReadDeadline(time.Time{})
+				if err != nil {
+					fmt.Printf("Warning: Failed to read post-licensing PDU: %v\n", err)
+					return c.attemptDirectScreenshot()
+				}
 			}
 		}
 	}
-	
-	
-	if len(data) >= 6 {
+
+	// Check for FastPath again before Slow Path parsing
+	if len(data) > 0 && (data[0]&0x3) == 0 {
+		// It's FastPath.
+		// Wait, Demand Active is expected here. Demand Active is ALWAYS Slow Path (TPKT/X224/MCS).
+		// So if we got FastPath here, it's unexpected.
+		fmt.Println("Received unexpected FastPath PDU during handshake")
+	} else if len(data) >= 6 {
 		shareCtrlHdr, err := parseShareControlHeader(bytes.NewReader(data))
 		if err == nil && shareCtrlHdr.PDUType&0x0F == PDUTYPE_DEMANDACTIVEPDU {
 			fmt.Println("Received Demand Active PDU")
-			
+
 			c.unreadData = data
 			shareID, err := c.receiveDemandActive()
 			if err != nil {
 				fmt.Printf("Warning: Failed to process demand active: %v\n", err)
 				return c.attemptDirectScreenshot()
 			}
-			
-			
+
 			if err := c.sendConfirmActive(shareID); err != nil {
 				fmt.Printf("Warning: Failed to send confirm active: %v\n", err)
 				return c.attemptDirectScreenshot()
 			}
-			
-			
+
 			if err := c.sendClientInfoPDU(); err != nil {
 				fmt.Printf("Warning: Failed to send client info: %v\n", err)
 			}
-			
-			
+
 			fmt.Println("Sending finalization PDUs...")
-			
-			
-			syncPDU := buildSynchronizePDU(c.mcsUserID)
+
+			syncPDU := buildSynchronizePDU(c.mcsUserID, c.shareID)
 			if err := c.sendEncryptedPDU(syncPDU); err != nil {
 				fmt.Printf("Warning: Failed to send sync PDU: %v\n", err)
 			}
-			
-			
-			controlPDU := buildControlPDU(CTRLACTION_COOPERATE)
+
+			controlPDU := buildControlPDU(CTRLACTION_COOPERATE, c.mcsUserID, c.shareID)
 			if err := c.sendEncryptedPDU(controlPDU); err != nil {
 				fmt.Printf("Warning: Failed to send control PDU: %v\n", err)
 			}
-			
-			
-			fontPDU := buildFontListPDU()
+
+			fontPDU := buildFontListPDU(c.mcsUserID, c.shareID)
 			if err := c.sendEncryptedPDU(fontPDU); err != nil {
 				fmt.Printf("Warning: Failed to send font PDU: %v\n", err)
 			}
-			
-			
+
 			fmt.Println("Requesting screen refresh...")
-			refreshPDU := buildRefreshRectanglePDU(c.mcsUserID)
+			refreshPDU := buildRefreshRectanglePDU(c.mcsUserID, c.ioChannel, c.shareID)
 			if err := c.sendEncryptedPDU(refreshPDU); err != nil {
 				fmt.Printf("Warning: Failed to send refresh PDU: %v\n", err)
 			}
-			
-			
+
 			return c.receiveBitmapUpdate()
 		}
 	}
-	
-	
+
 	fmt.Println("Unexpected PDU type, trying direct screenshot approach...")
 	screenshot, err := c.attemptDirectScreenshot()
 	if err != nil {
@@ -289,7 +280,6 @@ func (c *Client) Screenshot() ([]byte, error) {
 	}
 	return screenshot, nil
 }
-
 
 func isNLA(protocol uint32) bool {
 	return protocol == PROTOCOL_HYBRID || protocol == PROTOCOL_HYBRID_EX
@@ -327,14 +317,12 @@ func (c *Client) sendSecurityExchange() error {
 	}
 	c.clientRandom = clientRandom
 
-	
 	wrappedPDU := c.secureWrap(SEC_EXCHANGE_PKT, pdu)
 	if err := c.sendPDU(wrappedPDU); err != nil {
 		return fmt.Errorf("failed to send security exchange PDU: %w", err)
 	}
 	fmt.Println("Security Exchange PDU sent")
 
-	
 	if c.serverSecurityData.EncryptionMethod != ENCRYPTION_METHOD_NONE &&
 		c.serverSecurityData.ServerRandom != nil &&
 		c.clientRandom != nil {
@@ -375,14 +363,11 @@ func (c *Client) performMCSDomainJoin() error {
 	c.mcsUserID = userID
 	fmt.Printf("Got user ID: %d\n", userID)
 
-	
 	c.ioChannel = 1003
 	fmt.Printf("Channel setup: User=%d, I/O=%d\n", c.mcsUserID, c.ioChannel)
-	
-	
+
 	fmt.Println("Joining MCS channels...")
-	
-	
+
 	if err := c.sendMCSChannelJoinRequest(c.mcsUserID); err != nil {
 		return fmt.Errorf("failed to send user channel join request: %w", err)
 	}
@@ -390,8 +375,7 @@ func (c *Client) performMCSDomainJoin() error {
 		return fmt.Errorf("failed to receive user channel join confirm: %w", err)
 	}
 	fmt.Printf("Joined user channel: %d\n", c.mcsUserID)
-	
-	
+
 	if err := c.sendMCSChannelJoinRequest(c.ioChannel); err != nil {
 		return fmt.Errorf("failed to send I/O channel join request: %w", err)
 	}
@@ -401,15 +385,14 @@ func (c *Client) performMCSDomainJoin() error {
 	fmt.Printf("Joined I/O channel: %d\n", c.ioChannel)
 
 	fmt.Println("MCS Domain Join completed successfully")
-	
-	
+
 	fmt.Println("Waiting for server response (License or Demand Active)...")
 	c.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	pdu, err := c.readSecurePayload()
 	c.conn.SetReadDeadline(time.Time{})
-	
+
 	if err != nil {
-		
+
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			fmt.Println("No response from server, proceeding to demand active phase...")
 			return c.waitForDemandActive()
@@ -417,16 +400,24 @@ func (c *Client) performMCSDomainJoin() error {
 		fmt.Printf("Error reading server response: %v\n", err)
 		return err
 	}
-	
-	
+
 	if len(pdu) >= 4 {
+		// Check for FastPath
+		if (pdu[0] & 0x3) == 0 {
+			// FastPath... unusual here but possible?
+			fmt.Printf("Received FastPath PDU during domain join (header: 0x%02X)\n", pdu[0])
+			c.unreadData = pdu
+			// We can't really "processDemandActive" with FastPath, but maybe?
+			return c.waitForDemandActive()
+		}
+
 		flags := binary.LittleEndian.Uint16(pdu[0:2])
 		if flags&SEC_LICENSE_PKT != 0 {
 			fmt.Println("Received licensing PDU")
 			if err := c.sendLicenseErrorAlert(STATUS_VALID_CLIENT); err != nil {
 				return fmt.Errorf("failed to send license error alert: %w", err)
 			}
-			
+
 			return c.waitForDemandActive()
 		} else {
 			fmt.Printf("Received non-licensing PDU (flags: 0x%04X)\n", flags)
@@ -434,7 +425,7 @@ func (c *Client) performMCSDomainJoin() error {
 			return c.processDemandActive()
 		}
 	}
-	
+
 	return fmt.Errorf("unexpected PDU format")
 }
 
@@ -443,11 +434,11 @@ func (c *Client) waitForDemandActive() error {
 	c.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	pdu, err := c.readSecurePayload()
 	c.conn.SetReadDeadline(time.Time{})
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to read demand active: %w", err)
 	}
-	
+
 	c.unreadData = pdu
 	return c.processDemandActive()
 }
@@ -456,115 +447,104 @@ func (c *Client) processDemandActive() error {
 	if c.unreadData == nil {
 		return fmt.Errorf("no demand active PDU to process")
 	}
-	
+
 	data := c.unreadData
 	c.unreadData = nil
-	
-	
+
+	if len(data) > 0 && (data[0]&0x3) == 0 {
+		return fmt.Errorf("received FastPath PDU when expecting Demand Active PDU")
+	}
+
 	if len(data) >= 6 {
 		shareCtrlHdr, err := parseShareControlHeader(bytes.NewReader(data))
 		if err == nil && shareCtrlHdr.PDUType&0x0F == PDUTYPE_DEMANDACTIVEPDU {
 			fmt.Println("Processing Demand Active PDU")
-			c.unreadData = data 
+			c.unreadData = data
 			shareID, err := c.receiveDemandActive()
 			if err != nil {
 				return fmt.Errorf("failed to process demand active: %w", err)
 			}
-			
-			
+			c.shareID = shareID
+
 			if err := c.sendConfirmActive(shareID); err != nil {
 				return fmt.Errorf("failed to send confirm active: %w", err)
 			}
-			
-			
+
 			return c.completeRDPConnection()
 		}
 	}
-	
+
 	return fmt.Errorf("expected demand active PDU but got something else")
 }
 
 func (c *Client) handlePostLicensing() error {
 	fmt.Println("Entering post-licensing phase...")
-	
-	
+
 	fmt.Println("Sending Client Info PDU...")
 	if err := c.sendClientInfoPDU(); err != nil {
 		return fmt.Errorf("failed to send client info: %w", err)
 	}
-	
-	
+
 	if c.unreadData != nil {
 		fmt.Println("Processing saved PDU...")
 		data := c.unreadData
 		c.unreadData = nil
-		
-		
+
 		if len(data) >= 6 {
 			shareCtrlHdr, err := parseShareControlHeader(bytes.NewReader(data))
 			if err == nil && shareCtrlHdr.PDUType&0x0F == PDUTYPE_DEMANDACTIVEPDU {
 				fmt.Println("Processing Demand Active PDU")
-				c.unreadData = data 
+				c.unreadData = data
 				shareID, err := c.receiveDemandActive()
 				if err != nil {
 					return fmt.Errorf("failed to process demand active: %w", err)
 				}
-				
-				
+
 				if err := c.sendConfirmActive(shareID); err != nil {
 					return fmt.Errorf("failed to send confirm active: %w", err)
 				}
-				
-				
+
 				return c.completeRDPConnection()
 			}
 		}
 	}
-	
-	
+
 	shareID, err := c.receiveDemandActive()
 	if err != nil {
 		return fmt.Errorf("failed to receive demand active: %w", err)
 	}
-	
-	
+
 	if err := c.sendConfirmActive(shareID); err != nil {
 		return fmt.Errorf("failed to send confirm active: %w", err)
 	}
-	
-	
+
 	return c.completeRDPConnection()
 }
 
 func (c *Client) completeRDPConnection() error {
 	fmt.Println("Completing RDP connection sequence...")
-	
-	
-	syncPDU := buildSynchronizePDU(c.mcsUserID)
+
+	syncPDU := buildSynchronizePDU(c.mcsUserID, c.shareID)
 	if err := c.sendEncryptedPDU(syncPDU); err != nil {
 		fmt.Printf("Warning: Failed to send sync PDU: %v\n", err)
 	}
-	
-	
-	controlPDU := buildControlPDU(CTRLACTION_COOPERATE)
+
+	controlPDU := buildControlPDU(CTRLACTION_COOPERATE, c.mcsUserID, c.shareID)
 	if err := c.sendEncryptedPDU(controlPDU); err != nil {
 		fmt.Printf("Warning: Failed to send control PDU: %v\n", err)
 	}
-	
-	
-	fontPDU := buildFontListPDU()
+
+	fontPDU := buildFontListPDU(c.mcsUserID, c.shareID)
 	if err := c.sendEncryptedPDU(fontPDU); err != nil {
 		fmt.Printf("Warning: Failed to send font PDU: %v\n", err)
 	}
-	
-	
+
 	fmt.Println("Requesting screen refresh...")
-	refreshPDU := buildRefreshRectanglePDU(c.mcsUserID)
+	refreshPDU := buildRefreshRectanglePDU(c.mcsUserID, c.ioChannel, c.shareID)
 	if err := c.sendEncryptedPDU(refreshPDU); err != nil {
 		fmt.Printf("Warning: Failed to send refresh PDU: %v\n", err)
 	}
-	
-	
+
 	screenshot, err := c.receiveBitmapUpdate()
 	if err != nil {
 		return err
@@ -575,13 +555,11 @@ func (c *Client) completeRDPConnection() error {
 
 func (c *Client) handleLicensing() error {
 	fmt.Println("Attempting to read licensing PDU...")
-	
-	
-	
+
 	c.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	pdu, err := c.readSecurePayload()
 	c.conn.SetReadDeadline(time.Time{})
-	
+
 	if err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			fmt.Println("No licensing PDU received (timeout) - server may not require licensing")
@@ -594,15 +572,20 @@ func (c *Client) handleLicensing() error {
 		fmt.Printf("Error reading licensing PDU: %v\n", err)
 		return err
 	}
-	
+
 	fmt.Printf("Received PDU (%d bytes)\n", len(pdu))
-	
+
 	if len(pdu) < 4 {
 		fmt.Println("PDU too short")
 		return nil
 	}
-	
-	
+
+	// Check FastPath
+	if (pdu[0] & 0x3) == 0 {
+		c.unreadData = pdu
+		return nil
+	}
+
 	securityFlags := binary.LittleEndian.Uint16(pdu[0:])
 	if securityFlags&SEC_LICENSE_PKT != 0 {
 		fmt.Println("Received licensing PDU, sending license error alert...")
@@ -613,58 +596,51 @@ func (c *Client) handleLicensing() error {
 		fmt.Printf("Not a licensing PDU (flags: 0x%04X), might be demand active\n", securityFlags)
 		c.unreadData = pdu
 	}
-	
+
 	return nil
 }
 
 func (c *Client) receiveMCSChannelJoinConfirmRaw() error {
-	
+
 	c.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 	defer c.conn.SetReadDeadline(time.Time{})
-	
-	
+
 	pdu, err := c.readSecurePayload()
 	if err != nil {
-		
+
 		pdu, err = c.readRawPDU()
 		if err != nil {
-			
+
 			fmt.Printf("No channel join confirm received (this might be normal for XRDP): %v\n", err)
-			return nil 
+			return nil
 		}
 	}
-	
+
 	fmt.Printf("MCS Channel Join Confirm PDU: %x\n", pdu)
-	
-	
+
 	if err := parseMCSChannelJoinConfirm(pdu); err != nil {
 		fmt.Printf("Warning: Could not parse channel join confirm: %v\n", err)
-		
+
 	} else {
 		fmt.Println("Channel join confirmed successfully")
 	}
-	
+
 	return nil
 }
 
-
 func (c *Client) readAndParseChannelJoinConfirm() error {
-	
+
 	c.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	defer c.conn.SetReadDeadline(time.Time{})
-	
-	
-	
+
 	pdu, err := c.readSecurePayload()
 	if err != nil {
 		fmt.Printf("Encrypted read failed: %v, trying raw PDU read...\n", err)
-		
-		
+
 		pdu, err = c.readRawPDU()
 		if err != nil {
 			fmt.Printf("Raw PDU read failed: %v, trying basic read...\n", err)
-			
-			
+
 			basicBuf := make([]byte, 1024)
 			n, err := c.conn.Read(basicBuf)
 			if err != nil {
@@ -673,103 +649,105 @@ func (c *Client) readAndParseChannelJoinConfirm() error {
 			pdu = basicBuf[:n]
 		}
 	}
-	
+
 	fmt.Printf("Channel Join Confirm data (%d bytes): %x\n", len(pdu), pdu)
-	
-	
+
 	var mcsData []byte
-	
-	
+
 	if len(pdu) >= 7 && pdu[0] == 0x03 && pdu[1] == 0x00 {
-		
+
 		if pdu[4] == 0x02 && pdu[5] == 0xF0 && pdu[6] == 0x80 {
 			mcsData = pdu[7:]
 		}
 	} else if len(pdu) >= 4 {
-		
-		flags := binary.LittleEndian.Uint16(pdu[0:2])
-		if flags&SEC_ENCRYPT != 0 {
-			
-			payload := pdu[4:]
-			if c.decryptor != nil {
-				c.decryptor.Decrypt(payload)
-			}
-			mcsData = payload
-		} else {
-			
+		// Check FastPath
+		if (pdu[0] & 0x3) == 0 {
+			// FastPath not expected here
 			mcsData = pdu
+		} else {
+			flags := binary.LittleEndian.Uint16(pdu[0:2])
+			if flags&SEC_ENCRYPT != 0 {
+
+				payload := pdu[4:]
+				if c.decryptor != nil {
+					c.decryptor.Decrypt(payload)
+				}
+				mcsData = payload
+			} else {
+
+				mcsData = pdu
+			}
 		}
 	} else {
 		mcsData = pdu
 	}
-	
+
 	if len(mcsData) > 0 {
 		fmt.Printf("Extracted MCS data: %x\n", mcsData)
 		return parseMCSChannelJoinConfirm(mcsData)
 	}
-	
+
 	return fmt.Errorf("could not extract MCS data from response")
 }
 
 func (c *Client) sendChannelJoinsAsSendData() error {
-	
-	
-	
+
 	sendDataPDU := buildMCSSendDataRequest(c.mcsUserID, c.ioChannel, []byte{})
 	fmt.Printf("Sending MCS Send Data Request to I/O channel: %x\n", sendDataPDU)
-	
-	
+
 	if err := c.sendPDU(sendDataPDU); err != nil {
 		return fmt.Errorf("failed to send MCS data request: %w", err)
 	}
-	
-	
+
 	time.Sleep(100 * time.Millisecond)
-	
+
 	return nil
 }
 
 func (c *Client) handleServerPDU() error {
-	
+
 	data, err := c.readSecurePayload()
 	if err != nil {
 		return fmt.Errorf("failed to read server PDU: %w", err)
 	}
-	
-	
+
 	if len(data) >= 4 {
+		// Check FastPath
+		if (data[0] & 0x3) == 0 {
+			c.unreadData = data
+			return nil
+		}
+
 		flags := binary.LittleEndian.Uint16(data[0:2])
 		if flags&SEC_LICENSE_PKT != 0 {
 			fmt.Println("Received licensing PDU")
-			
+
 			return c.sendLicenseErrorAlert(STATUS_VALID_CLIENT)
 		}
 	}
-	
-	
+
 	if len(data) >= 6 {
 		shareCtrlHdr, err := parseShareControlHeader(bytes.NewReader(data))
 		if err == nil && shareCtrlHdr.PDUType&0x0F == PDUTYPE_DEMANDACTIVEPDU {
 			fmt.Println("Received Demand Active PDU directly")
-			
+
 			c.unreadData = data
 			return nil
 		}
 	}
-	
+
 	return fmt.Errorf("unexpected server PDU type")
 }
 
 func (c *Client) joinChannelsViaSendData() error {
-	
+
 	fmt.Printf("Joining I/O channel %d...\n", c.ioChannel)
 	ioChannelJoinPDU := buildMCSChannelJoinRequest(c.mcsUserID, c.ioChannel)
 	fmt.Printf("I/O Channel Join PDU: %x\n", ioChannelJoinPDU)
 	if err := c.sendEncryptedPDU(ioChannelJoinPDU); err != nil {
 		return fmt.Errorf("failed to send I/O channel join: %w", err)
 	}
-	
-	
+
 	fmt.Println("Waiting for I/O channel join confirm...")
 	c.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	err := c.receiveMCSChannelJoinConfirm(c.ioChannel)
@@ -784,16 +762,14 @@ func (c *Client) joinChannelsViaSendData() error {
 		fmt.Println("I/O channel join confirmed")
 	}
 
-	
 	fmt.Printf("Joining user channel %d...\n", c.mcsUserID)
 	userChannelJoinPDU := buildMCSChannelJoinRequest(c.mcsUserID, c.mcsUserID)
 	fmt.Printf("User Channel Join PDU: %x\n", userChannelJoinPDU)
 	if err := c.sendEncryptedPDU(userChannelJoinPDU); err != nil {
 		return fmt.Errorf("failed to send user channel join: %w", err)
 	}
-	
-	
-	fmt.Println("Waiting for user channel join confirm...")  
+
+	fmt.Println("Waiting for user channel join confirm...")
 	c.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	err = c.receiveMCSChannelJoinConfirm(c.mcsUserID)
 	c.conn.SetReadDeadline(time.Time{})
@@ -813,8 +789,7 @@ func (c *Client) joinChannelsViaSendData() error {
 func (c *Client) receiveDemandActive() (uint32, error) {
 	var data []byte
 	var err error
-	
-	
+
 	if c.unreadData != nil {
 		data = c.unreadData
 		c.unreadData = nil
@@ -846,63 +821,54 @@ func (c *Client) sendConfirmActive(shareID uint32) error {
 	if err := c.sendEncryptedPDU(pdu); err != nil {
 		return err
 	}
-	
-	
-	
+
 	fmt.Println("Sending Client Info PDU...")
 	return c.sendClientInfoPDU()
 }
 
 func (c *Client) finalizeConnection() error {
-	if err := c.sendEncryptedPDU(buildSynchronizePDU(c.mcsUserID)); err != nil {
+	if err := c.sendEncryptedPDU(buildSynchronizePDU(c.mcsUserID, c.shareID)); err != nil {
 		return err
 	}
-	if err := c.sendEncryptedPDU(buildControlPDU(CTRLACTION_COOPERATE)); err != nil {
+	if err := c.sendEncryptedPDU(buildControlPDU(CTRLACTION_COOPERATE, c.mcsUserID, c.shareID)); err != nil {
 		return err
 	}
-	if err := c.sendEncryptedPDU(buildControlPDU(CTRLACTION_REQUEST_CONTROL)); err != nil {
+	if err := c.sendEncryptedPDU(buildControlPDU(CTRLACTION_REQUEST_CONTROL, c.mcsUserID, c.shareID)); err != nil {
 		return err
 	}
-	
-	
-	
-	if err := c.sendEncryptedPDU(buildPersistentKeyListPDU(nil)); err != nil {
-		
+
+	if err := c.sendEncryptedPDU(buildPersistentKeyListPDU(nil, c.mcsUserID, c.shareID)); err != nil {
+
 		fmt.Printf("Warning: Failed to send persistent key list PDU: %v\n", err)
 	}
-	
-	if err := c.sendEncryptedPDU(buildFontListPDU()); err != nil {
+
+	if err := c.sendEncryptedPDU(buildFontListPDU(c.mcsUserID, c.shareID)); err != nil {
 		return err
 	}
 
-	
-	if err := c.sendEncryptedPDU(buildSuppressOutputPDU(true)); err != nil {
+	if err := c.sendEncryptedPDU(buildSuppressOutputPDU(true, c.mcsUserID, c.shareID)); err != nil {
 		return err
 	}
 
-	
-	if err := c.sendEncryptedPDU(buildRefreshRectPDU(0, 0, 1920, 1080)); err != nil {
+	if err := c.sendEncryptedPDU(buildRefreshRectPDU(0, 0, 1920, 1080, c.mcsUserID, c.shareID)); err != nil {
 		return err
 	}
 
-	
 	time.Sleep(100 * time.Millisecond)
-	
-	
+
 	if c.autoDetectManager != nil && c.opts.EnableAutoDetect {
 		fmt.Println("Starting network auto-detection...")
 		if err := c.autoDetectManager.StartConnectionTimeDetection(); err != nil {
 			fmt.Printf("Warning: Auto-detect failed: %v\n", err)
-			
+
 		}
 	}
-	
-	
+
 	if c.heartbeatManager != nil && c.opts.EnableHeartbeat {
 		fmt.Println("Starting connection health monitoring...")
 		if err := c.heartbeatManager.Start(); err != nil {
 			fmt.Printf("Warning: Failed to start heartbeat: %v\n", err)
-			
+
 		}
 	}
 
@@ -913,19 +879,47 @@ func (c *Client) receiveBitmapUpdate() ([]byte, error) {
 	c.conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	defer c.conn.SetReadDeadline(time.Time{})
 
-	
 	maxAttempts := 20
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		data, err := c.readSecurePayload()
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() && attempt > 5 {
-				
+
 				return nil, fmt.Errorf("timeout waiting for bitmap update after %d attempts", attempt)
 			}
 			continue
 		}
 
-		
+		if len(data) < 1 {
+			continue
+		}
+
+		// Check for FastPath
+		if (data[0] & 0x3) == 0 {
+			fmt.Println("FastPath update detected")
+			fpPDU, err := parseFastPathUpdatePDU(data)
+			if err != nil {
+				fmt.Printf("Failed to parse FastPath PDU: %v\n", err)
+				continue
+			}
+
+			if fpPDU.UpdateCode == FASTPATH_UPDATETYPE_BITMAP {
+				fmt.Printf("FastPath Bitmap Update detected (size: %d)\n", len(fpPDU.Data))
+				bitmapUpdate, err := parseFastPathBitmapUpdate(fpPDU.Data)
+				if err != nil {
+					fmt.Printf("Failed to parse FastPath bitmap update: %v\n", err)
+					continue
+				}
+
+				if len(bitmapUpdate.Rectangles) > 0 {
+					return c.processBitmapRectangles(bitmapUpdate.Rectangles)
+				}
+			} else {
+				fmt.Printf("Ignored FastPath Update Type: %d\n", fpPDU.UpdateCode)
+			}
+			continue
+		}
+
 		if len(data) < 6 {
 			continue
 		}
@@ -935,7 +929,6 @@ func (c *Client) receiveBitmapUpdate() ([]byte, error) {
 			continue
 		}
 
-		
 		if shareCtrlHdr.PDUType&0x0F == PDUTYPE_DATAPDU {
 			if len(data) < 14 {
 				continue
@@ -946,10 +939,9 @@ func (c *Client) receiveBitmapUpdate() ([]byte, error) {
 				continue
 			}
 
-			
 			switch shareDataHdr.PDUType2 {
 			case PDUTYPE2_UPDATE:
-				
+
 				updateData := data[14:]
 				if len(updateData) < 2 {
 					continue
@@ -966,62 +958,57 @@ func (c *Client) receiveBitmapUpdate() ([]byte, error) {
 					}
 
 					if len(bitmapUpdate.Rectangles) > 0 {
-						
-						for _, rect := range bitmapUpdate.Rectangles {
-							if len(rect.BitmapDataStream) > 0 {
-								fmt.Printf("Converting bitmap: %dx%d, %d bpp, %d bytes\n",
-									rect.Width, rect.Height, rect.BitsPerPixel, len(rect.BitmapDataStream))
-
-								imageData, err := bitmap.ConvertBitmapToImage(&rect)
-								if err != nil {
-									fmt.Printf("Failed to convert bitmap: %v\n", err)
-									continue
-								}
-								return imageData, nil
-							}
-						}
+						return c.processBitmapRectangles(bitmapUpdate.Rectangles)
 					}
 				}
 
 			case PDUTYPE2_SYNCHRONIZE:
 				fmt.Println("Received synchronize PDU")
-				
-				c.sendEncryptedPDU(buildSynchronizePDU(c.mcsUserID))
+
+				c.sendEncryptedPDU(buildSynchronizePDU(c.mcsUserID, c.shareID))
 
 			case PDUTYPE2_CONTROL:
 				fmt.Println("Received control PDU")
-				
 
 			default:
 				fmt.Printf("Received PDU type2: 0x%02X\n", shareDataHdr.PDUType2)
 			}
 		} else if shareCtrlHdr.PDUType&0x0F == PDUTYPE_DEACTIVATEALLPDU {
 			fmt.Println("Received deactivate all PDU")
-			
-			return nil, fmt.Errorf("server deactivated connection")
-		}
 
-		
-		if len(data) > 0 && (data[0]&0x3) == 0 {
-			
-			fmt.Println("Possible fast-path update detected")
-			
+			return nil, fmt.Errorf("server deactivated connection")
 		}
 	}
 
 	return nil, fmt.Errorf("no bitmap update received after %d attempts", maxAttempts)
 }
 
+func (c *Client) processBitmapRectangles(rectangles []BitmapData) ([]byte, error) {
+	for _, rect := range rectangles {
+		if len(rect.BitmapDataStream) > 0 {
+			fmt.Printf("Converting bitmap: %dx%d, %d bpp, %d bytes\n",
+				rect.Width, rect.Height, rect.BitsPerPixel, len(rect.BitmapDataStream))
+
+			imageData, err := bitmap.ConvertBitmapToImage(&rect)
+			if err != nil {
+				fmt.Printf("Failed to convert bitmap: %v\n", err)
+				continue
+			}
+			return imageData, nil
+		}
+	}
+	return nil, nil // Keep waiting
+}
+
 func (c *Client) sendEncryptedPDU(pdu []byte) error {
 	fmt.Printf("Sending PDU (raw): %x\n", pdu)
-	
-	
+
 	if c.encryptor != nil && c.serverSecurityData != nil && c.serverSecurityData.EncryptionMethod != ENCRYPTION_METHOD_NONE {
 		wrappedPDU := c.secureWrap(SEC_ENCRYPT, pdu)
 		fmt.Printf("Sending PDU (encrypted+wrapped): %x\n", wrappedPDU)
 		return c.sendPDU(wrappedPDU)
 	} else {
-		
+
 		wrappedPDU := c.secureWrap(0, pdu)
 		fmt.Printf("Sending PDU (wrapped): %x\n", wrappedPDU)
 		return c.sendPDU(wrappedPDU)
@@ -1044,37 +1031,32 @@ func (c *Client) sendPDU(pdu []byte) error {
 }
 
 func (c *Client) readRawPDU() ([]byte, error) {
-	
+
 	peekBuf := make([]byte, 1)
 	if _, err := io.ReadFull(c.conn, peekBuf); err != nil {
 		return nil, err
 	}
 
-	
 	if (peekBuf[0] & 0x3) == 0 {
-		
+
 		return c.readFastPathPDU(peekBuf[0])
 	}
 
-	
 	tpktBuf := make([]byte, 3)
 	if _, err := io.ReadFull(c.conn, tpktBuf); err != nil {
 		return nil, err
 	}
 
-	
 	length := binary.BigEndian.Uint16(append([]byte{peekBuf[0]}, tpktBuf...)[2:])
 	if length < 4 {
 		return nil, fmt.Errorf("invalid TPKT length: %d", length)
 	}
 
-	
 	payload := make([]byte, length-4)
 	if _, err := io.ReadFull(c.conn, payload); err != nil {
 		return nil, err
 	}
 
-	
 	if len(payload) >= 3 && payload[0] == 0x02 && payload[1] == 0xf0 && payload[2] == 0x80 {
 		return payload[3:], nil
 	}
@@ -1082,34 +1064,29 @@ func (c *Client) readRawPDU() ([]byte, error) {
 	return payload, nil
 }
 
-
 func (c *Client) sendRawPDU(pdu []byte) error {
-	
+
 	x224Header := []byte{0x02, 0xF0, 0x80}
-	
-	
+
 	x224Data := append(x224Header, pdu...)
-	
-	
+
 	tpktLength := len(x224Data) + 4
 	tpkt := make([]byte, 4)
-	tpkt[0] = 0x03 
-	tpkt[1] = 0x00 
+	tpkt[0] = 0x03
+	tpkt[1] = 0x00
 	binary.BigEndian.PutUint16(tpkt[2:], uint16(tpktLength))
-	
-	
+
 	fullPacket := append(tpkt, x224Data...)
-	
+
 	fmt.Printf("Sending raw PDU: %x\n", pdu)
 	fmt.Printf("Sending complete packet: %x\n", fullPacket)
-	
-	
+
 	_, err := c.conn.Write(fullPacket)
 	return err
 }
 
 func (c *Client) readFastPathPDU(firstByte byte) ([]byte, error) {
-	
+
 	var length int
 	lengthByte1 := make([]byte, 1)
 	if _, err := io.ReadFull(c.conn, lengthByte1); err != nil {
@@ -1117,33 +1094,33 @@ func (c *Client) readFastPathPDU(firstByte byte) ([]byte, error) {
 	}
 
 	if lengthByte1[0]&0x80 != 0 {
-		
+
 		lengthByte2 := make([]byte, 1)
 		if _, err := io.ReadFull(c.conn, lengthByte2); err != nil {
 			return nil, err
 		}
 		length = int(lengthByte1[0]&0x7F)<<8 | int(lengthByte2[0])
 	} else {
-		
+
 		length = int(lengthByte1[0])
 	}
 
-	
-	data := make([]byte, length-2) 
+	data := make([]byte, length-2)
 	if _, err := io.ReadFull(c.conn, data); err != nil {
 		return nil, err
 	}
 
-	
 	if firstByte&0x80 != 0 && c.decryptor != nil {
-		
+
 		if len(data) > 8 {
 			c.decryptor.Decrypt(data[8:])
-			return data[8:], nil
+			data = data[8:] // Update data to exclude signature
 		}
 	}
 
-	return data, nil
+	// Return Header + Data
+	fullPDU := append([]byte{firstByte}, data...)
+	return fullPDU, nil
 }
 
 func (c *Client) readSecurePayload() ([]byte, error) {
@@ -1151,6 +1128,13 @@ func (c *Client) readSecurePayload() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	
+	// Check if FastPath
+	if len(payload) > 0 && (payload[0] & 0x3) == 0 {
+		// It's FastPath, already decrypted by readFastPathPDU
+		return payload, nil
+	}
+	
 	return c.secureUnwrap(payload)
 }
 
@@ -1160,17 +1144,15 @@ func (c *Client) receiveMCSAttachUserConfirm() (uint16, error) {
 		return 0, err
 	}
 
-	
 	fmt.Printf("MCS Attach User Confirm PDU: %x\n", pdu)
 
 	return parseMCSAttachUserConfirm(pdu)
 }
 
-
 func (c *Client) secureWrap(flags uint16, payload []byte) []byte {
 	head := make([]byte, 4)
 	binary.LittleEndian.PutUint16(head, flags)
-	binary.LittleEndian.PutUint16(head[2:], 0) 
+	binary.LittleEndian.PutUint16(head[2:], 0)
 	fullPDU := append(head, payload...)
 	if c.encryptor != nil && flags&SEC_ENCRYPT != 0 {
 		c.encryptor.Encrypt(fullPDU[4:])
@@ -1180,23 +1162,19 @@ func (c *Client) secureWrap(flags uint16, payload []byte) []byte {
 
 func (c *Client) secureUnwrap(data []byte) ([]byte, error) {
 	if len(data) < 4 {
-		
-		
+
 		return data, nil
 	}
 
 	flags := binary.LittleEndian.Uint16(data)
 
-	
 	if flags&(SEC_ENCRYPT|SEC_LICENSE_PKT|SEC_EXCHANGE_PKT) == 0 && flags != 0 {
-		
+
 		return data, nil
 	}
 
-	
 	payload := data[4:]
 
-	
 	if c.decryptor != nil && flags&SEC_ENCRYPT != 0 && len(payload) > 0 {
 		c.decryptor.Decrypt(payload)
 	}
@@ -1204,46 +1182,39 @@ func (c *Client) secureUnwrap(data []byte) ([]byte, error) {
 	return payload, nil
 }
 
-
 func (c *Client) sendMCSChannelJoinRequest(channelID uint16) error {
 	pdu := buildMCSChannelJoinRequest(c.mcsUserID, channelID)
 	return c.sendPDU(pdu)
 }
-
 
 func (c *Client) receiveMCSChannelJoinConfirm(expectedChannelID uint16) error {
 	pdu, err := c.readRawPDU()
 	if err != nil {
 		return fmt.Errorf("failed to read channel join confirm: %w", err)
 	}
-	
-	
+
 	if len(pdu) < 5 {
 		return fmt.Errorf("channel join confirm PDU too short")
 	}
-	
-	
+
 	if pdu[0] != 0x02 || pdu[1] != 0xF0 || pdu[2] != 0x80 {
 		return fmt.Errorf("invalid X.224 header in channel join confirm")
 	}
-	
-	
+
 	return parseMCSChannelJoinConfirm(pdu[3:])
 }
 
-
 func (c *Client) Close() error {
-	
+
 	if c.heartbeatManager != nil {
 		c.heartbeatManager.Stop()
 	}
-	
+
 	if c.conn != nil {
 		return c.conn.Close()
 	}
 	return nil
 }
-
 
 type DemandActivePDU struct {
 	ShareID                    uint32
@@ -1256,16 +1227,14 @@ type DemandActivePDU struct {
 	SessionID                  uint32
 }
 
-
 type CapabilitySet struct {
 	Type   uint16
 	Length uint16
 	Data   []byte
 }
 
-
 func parseDemandActivePDU(data []byte) (*DemandActivePDU, error) {
-	if len(data) < 4 { 
+	if len(data) < 4 {
 		return nil, fmt.Errorf("demand active PDU too short for ShareID: %d bytes", len(data))
 	}
 
@@ -1285,7 +1254,7 @@ func parseDemandActivePDU(data []byte) (*DemandActivePDU, error) {
 	}
 
 	if r.Len() < 4 {
-		return pdu, nil 
+		return pdu, nil
 	}
 
 	binary.Read(r, binary.LittleEndian, &pdu.NumberCapabilities)
@@ -1318,79 +1287,64 @@ func parseDemandActivePDU(data []byte) (*DemandActivePDU, error) {
 	return pdu, nil
 }
 
-
 func (c *Client) buildClientInfoPDU() []byte {
-	
+
 	infoPDU := new(bytes.Buffer)
-	
-	
-	flags := uint32(0x00000001) 
-	flags |= uint32(0x00000008) 
-	flags |= uint32(0x00000010) 
+
+	flags := uint32(0x00000001)
+	flags |= uint32(0x00000008)
+	flags |= uint32(0x00000010)
 	binary.Write(infoPDU, binary.LittleEndian, flags)
-	
-	
+
 	binary.Write(infoPDU, binary.LittleEndian, uint32(0))
-	
-	
-	binary.Write(infoPDU, binary.LittleEndian, uint16(0)) 
-	
+
+	binary.Write(infoPDU, binary.LittleEndian, uint16(0))
+
 	username := []byte("user\x00")
 	binary.Write(infoPDU, binary.LittleEndian, uint16(len(username)*2))
-	
+
 	binary.Write(infoPDU, binary.LittleEndian, uint16(0))
-	
+
 	binary.Write(infoPDU, binary.LittleEndian, uint16(0))
-	
+
 	binary.Write(infoPDU, binary.LittleEndian, uint16(0))
-	
-	
+
 	for _, b := range username {
 		infoPDU.WriteByte(b)
-		infoPDU.WriteByte(0) 
+		infoPDU.WriteByte(0)
 	}
-	
-	
-	binary.Write(infoPDU, binary.LittleEndian, uint16(0x0001)) 
-	binary.Write(infoPDU, binary.LittleEndian, uint16(0)) 
-	binary.Write(infoPDU, binary.LittleEndian, uint16(0)) 
-	
-	
+
+	binary.Write(infoPDU, binary.LittleEndian, uint16(0x0001))
+	binary.Write(infoPDU, binary.LittleEndian, uint16(0))
+	binary.Write(infoPDU, binary.LittleEndian, uint16(0))
+
 	infoPDU.Write(make([]byte, 172))
-	
-	
+
 	binary.Write(infoPDU, binary.LittleEndian, uint32(0))
-	
+
 	binary.Write(infoPDU, binary.LittleEndian, uint32(0))
-	
+
 	return infoPDU.Bytes()
 }
 
-
 func (c *Client) sendClientInfoPDU() error {
-	
+
 	infoPDU := c.buildClientInfoPDU()
-	
-	
+
 	sendDataPDU := buildMCSSendDataRequest(c.mcsUserID, c.ioChannel, infoPDU)
-	
-	
+
 	return c.sendEncryptedPDU(sendDataPDU)
 }
 
-
 func (c *Client) attemptDirectScreenshot() ([]byte, error) {
 	fmt.Println("=== DIRECT SCREENSHOT ATTEMPT ===")
-	
-	
-	
-	
+
 	fmt.Println("Trying approach 1: Refresh rectangle request...")
-	refreshPDU := buildRefreshRectanglePDU(c.mcsUserID)
+	refreshPDU := buildRefreshRectanglePDU(c.mcsUserID, c.ioChannel, c.shareID)
 	if err := c.sendEncryptedPDU(refreshPDU); err != nil {
 		fmt.Printf("Approach 1 failed: %v\n", err)
 	} else {
-		
+
 		c.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 		if data, err := c.readRawPDU(); err == nil {
 			fmt.Printf("Got response from approach 1: %x\n", data)
@@ -1400,15 +1354,14 @@ func (c *Client) attemptDirectScreenshot() ([]byte, error) {
 		}
 		c.conn.SetReadDeadline(time.Time{})
 	}
-	
-	
+
 	fmt.Println("Trying approach 2: Input events...")
 	events := []InputEvent{buildMouseMoveEvent(100, 100)}
-	inputPDU := buildInputEventPDU(events)
+	inputPDU := buildInputEventPDU(events, c.mcsUserID, c.shareID)
 	if err := c.sendEncryptedPDU(inputPDU); err != nil {
 		fmt.Printf("Approach 2 failed: %v\n", err)
 	} else {
-		
+
 		c.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 		if data, err := c.readRawPDU(); err == nil {
 			fmt.Printf("Got response from approach 2: %x\n", data)
@@ -1418,88 +1371,67 @@ func (c *Client) attemptDirectScreenshot() ([]byte, error) {
 		}
 		c.conn.SetReadDeadline(time.Time{})
 	}
-	
-	
-	fmt.Println("Trying approach 3: Generate test bitmap...")
-	return c.generateTestBitmap()
-}
 
+	fmt.Println("Trying approach 3: Generate test bitmap...")
+	return nil, fmt.Errorf("direct screenshot failed: no valid bitmap received")
+}
 
 func (c *Client) tryParseBitmapFromPDU(data []byte) []byte {
 	if len(data) < 20 {
 		return nil
 	}
-	
-	
+
 	for i := 0; i < len(data)-4; i++ {
 		if binary.LittleEndian.Uint16(data[i:]) == UPDATETYPE_BITMAP {
 			fmt.Printf("Found potential bitmap update at offset %d\n", i)
-			
+
 			if bitmap, err := c.extractBitmapFromUpdate(data[i:]); err == nil {
 				return bitmap
 			}
 		}
 	}
-	
+
 	return nil
 }
-
 
 func (c *Client) extractBitmapFromUpdate(data []byte) ([]byte, error) {
 	if len(data) < 10 {
 		return nil, fmt.Errorf("data too short")
 	}
-	
-	
-	return c.generateTestBitmap()
-}
 
+	update, err := parseBitmapUpdateData(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse bitmap update: %w", err)
+	}
 
-func (c *Client) generateTestBitmap() ([]byte, error) {
-	fmt.Println("Generating test bitmap to verify pipeline...")
-	
-	
-	width, height := 100, 100
-	bitmapData := make([]byte, width*height*3) 
-	
-	
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			offset := (y*width + x) * 3
-			
-			bitmapData[offset] = byte(x * 255 / width)     
-			bitmapData[offset+1] = byte(y * 255 / height) 
-			bitmapData[offset+2] = 128                     
+	for _, rect := range update.Rectangles {
+		if len(rect.BitmapDataStream) > 0 {
+			fmt.Printf("Converting bitmap: %dx%d, %d bpp, %d bytes\n",
+				rect.Width, rect.Height, rect.BitsPerPixel, len(rect.BitmapDataStream))
+
+			imageData, err := bitmap.ConvertBitmapToImage(&rect)
+			if err != nil {
+				fmt.Printf("Failed to convert bitmap: %v\n", err)
+				continue
+			}
+			return imageData, nil
 		}
 	}
-	
-	
-	return bitmap.ConvertRGBToPNG(bitmapData, width, height)
+
+	return nil, fmt.Errorf("no valid bitmap found in update")
 }
-
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 
 func (c *Client) GetNegotiatedProtocol() uint32 {
 	return c.negotiatedProtocol
 }
 
-
 func (c *Client) IsTLSEnabled() bool {
 	return c.tlsEnabled
 }
 
-
 func (c *Client) UpgradeTLS(config *TLSConfig) error {
 	return c.upgradeTLSConnection(config)
 }
-
 
 func (c *Client) TestCredSSPAuth() error {
 	if !c.tlsEnabled {

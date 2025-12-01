@@ -1,19 +1,3 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 package rdp
 
 import (
@@ -22,20 +6,11 @@ import (
 	"io"
 )
 
-
-
-
-
-
-
-
 type TPKTHeader struct {
 	Version  uint8
 	Reserved uint8
-	Length   uint16 
+	Length   uint16
 }
-
-
 
 func NewTPKTHeader(payloadSize int) *TPKTHeader {
 	return &TPKTHeader{
@@ -45,16 +20,12 @@ func NewTPKTHeader(payloadSize int) *TPKTHeader {
 	}
 }
 
-
-
 func (h *TPKTHeader) WriteTo(w io.Writer) (int64, error) {
 	if err := binary.Write(w, binary.BigEndian, h); err != nil {
 		return 0, fmt.Errorf("failed to write TPKT header: %w", err)
 	}
 	return TPKTHeaderSize, nil
 }
-
-
 
 func ReadTPKTHeader(r io.Reader) (*TPKTHeader, error) {
 	var h TPKTHeader
@@ -72,7 +43,6 @@ func ReadTPKTHeader(r io.Reader) (*TPKTHeader, error) {
 
 	return &h, nil
 }
-
 
 func (h *TPKTHeader) PayloadSize() int {
 	return int(h.Length) - TPKTHeaderSize
