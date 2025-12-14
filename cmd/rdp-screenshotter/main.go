@@ -68,8 +68,15 @@ func main() {
 		fail("create output dir: %v", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "shooting %d targets with %d workers, timeout %s\n",
-		len(targets), cfg.workers, cfg.timeout)
+	// Run boundaries are operational status, not package diagnostics: force them
+	// to INFO so they show even at the default -log-level=warn (which mutes the
+	// RDP/MCS/license flow to keep per-target progress clean).
+	runLog := rdp.Logger.Level(zerolog.InfoLevel)
+	runLog.Info().
+		Int("targets", len(targets)).
+		Int("workers", cfg.workers).
+		Dur("timeout", cfg.timeout).
+		Msg("starting run")
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -263,7 +270,11 @@ func summarise(results <-chan result, total int, format string) {
 			}
 		}
 	}
-	fmt.Fprintf(os.Stderr, "\n%d successful, %d failed\n", ok.Load(), failed.Load())
+	runLog := rdp.Logger.Level(zerolog.InfoLevel)
+	runLog.Info().
+		Int64("ok", ok.Load()).
+		Int64("failed", failed.Load()).
+		Msg("run complete")
 }
 
 func readTargets(path string) ([]string, error) {
@@ -297,6 +308,5 @@ func sanitiseHost(s string) string {
 }
 
 func fail(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "rdp-screenshotter: "+format+"\n", args...)
-	os.Exit(1)
+	rdp.Logger.Fatal().Msgf(format, args...)
 }

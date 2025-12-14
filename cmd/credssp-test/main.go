@@ -48,8 +48,10 @@ func main() {
 	}
 	defer client.Close()
 
-	fmt.Fprintf(os.Stderr, "negotiated protocol: 0x%08x (tls=%v)\n",
-		client.GetNegotiatedProtocol(), client.IsTLSEnabled())
+	rdp.Logger.Info().
+		Uint32("protocol", client.GetNegotiatedProtocol()).
+		Bool("tls", client.IsTLSEnabled()).
+		Msg("negotiated protocol")
 
 	if !client.IsTLSEnabled() {
 		host, _, _ := net.SplitHostPort(*target)
@@ -61,10 +63,9 @@ func main() {
 	if err := client.TestCredSSPAuth(); err != nil {
 		fail("CredSSP: %v", err)
 	}
-	fmt.Fprintln(os.Stderr, "CredSSP OK")
+	rdp.Logger.Info().Msg("CredSSP OK")
 }
 
 func fail(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "credssp-test: "+format+"\n", args...)
-	os.Exit(1)
+	rdp.Logger.Fatal().Msgf(format, args...)
 }
