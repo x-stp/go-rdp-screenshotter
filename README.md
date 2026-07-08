@@ -31,7 +31,7 @@ flowchart LR
 ## install
 
 ```bash
-go install github.com/x-stp/go-rdp-screenshotter/cmd/rdp-screenshotter@latest
+go install github.com/x-stp/go-rdp-screenshotter/cmd/rdp-screenshotter@v0.1.0
 ```
 
 Or build from source:
