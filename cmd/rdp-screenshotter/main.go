@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2024-2026 x-stp
+
 // Command rdp-screenshotter captures PNG screenshots of public RDP servers in
 // parallel.
 //
@@ -53,8 +56,19 @@ const (
 	outputFormatJSON = "json"
 )
 
+// Build metadata, injected by goreleaser ldflags (see .goreleaser.yaml).
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	cfg := parseFlags()
+	if cfg.showVersion {
+		fmt.Printf("rdp-screenshotter %s (%s) built %s\n", version, commit, date)
+		return
+	}
 	configureLogger(cfg.logLevel)
 
 	targets, err := readTargets(cfg.targetFile)
@@ -99,6 +113,7 @@ type config struct {
 	kerberos       bool
 	kerberosCCache string
 	kerberosConfig string
+	showVersion    bool
 }
 
 func parseFlags() config {
@@ -116,6 +131,7 @@ func parseFlags() config {
 	flag.BoolVar(&cfg.kerberos, "kerberos", false, "advertise Kerberos V5 in CredSSP (needs $KRB5CCNAME or -krb5-ccache); falls back to NTLM on failure")
 	flag.StringVar(&cfg.kerberosCCache, "krb5-ccache", "", "path to Kerberos credential cache (default: $KRB5CCNAME or /tmp/krb5cc_<uid>)")
 	flag.StringVar(&cfg.kerberosConfig, "krb5-config", "", "path to krb5.conf (default: $KRB5_CONFIG or /etc/krb5.conf)")
+	flag.BoolVar(&cfg.showVersion, "version", false, "print version and exit")
 	flag.Parse()
 	if cfg.outputFormat != outputFormatText && cfg.outputFormat != outputFormatJSON {
 		fail("invalid -output-format %q (want text|json)", cfg.outputFormat)
