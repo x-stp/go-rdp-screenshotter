@@ -2,14 +2,14 @@
 
 Pure-Go RDP client with one job: walk the protocol to the first server bitmap and dump it to a PNG. No cgo, no FreeRDP shell-out, no X server.
 
-[![CI](https://github.com/x-stp/rdp-screenshotter-go/actions/workflows/ci.yml/badge.svg)](https://github.com/x-stp/rdp-screenshotter-go/actions/workflows/ci.yml)
+[![CI](https://github.com/x-stp/go-rdp-screenshotter/actions/workflows/ci.yml/badge.svg)](https://github.com/x-stp/go-rdp-screenshotter/actions/workflows/ci.yml)
 [![License: MPL-2.0](https://img.shields.io/badge/License-MPL%202.0-brightgreen.svg)](https://opensource.org/licenses/MPL-2.0)
 
 ## what it does
 
-`rdp-screenshotter` opens an RDP connection, drives the handshake all the way to the first server bitmap update, decodes it to a PNG, and hangs up. It never negotiates input, sound, clipboard, or a full session — it grabs the frame and gets out.
+`rdp-screenshotter` opens an RDP connection, drives the handshake all the way to the first server bitmap update, decodes it to a PNG, and hangs up. It never negotiates input, sound, clipboard, or a full session - it grabs the frame and gets out.
 
-Against a fresh Shodan `port:3389 has_screenshot:true` slice, restricted to hosts that negotiate without NLA, it captures roughly **86%** — Server 2008 through Server 2022, Windows 10/11. Standard RDP Security, TLS-only, and modern Server 2012R2+ all work; NLA-gated hosts work when you supply `-username` / `-password` / `-domain` (NTLMv2, or `-kerberos` for an AP-REQ from your credential cache).
+Against a fresh Shodan `port:3389 has_screenshot:true` slice, restricted to hosts that negotiate without NLA, it captures roughly **86%** - Server 2008 through Server 2022, Windows 10/11. Standard RDP Security, TLS-only, and modern Server 2012R2+ all work; NLA-gated hosts work when you supply `-username` / `-password` / `-domain` (NTLMv2, or `-kerberos` for an AP-REQ from your credential cache).
 
 ```mermaid
 flowchart LR
@@ -55,7 +55,7 @@ NLA-gated hosts with credentials:
 rdp-screenshotter -targets targets.txt -username admin -password 's3cr3t' -domain CORP
 ```
 
-Kerberos (populate the ccache with `kinit` first — falls back to NTLM on any failure):
+Kerberos (populate the ccache with `kinit` first - falls back to NTLM on any failure):
 
 ```bash
 kinit admin@CORP.LOCAL
@@ -92,17 +92,17 @@ rdp-screenshotter -targets targets.txt -output-format json | jq -c 'select(.stat
 | `-log-level` | `warn` | `trace\|debug\|info\|warn\|error` |
 | `-output-format` | `text` | per-target result lines: `text\|json` |
 
-Per-target result lines go to **stdout**; protocol logs (structured zerolog) go to **stderr** at the level you pick. Pipe stdout to a file, leave stderr on the terminal. No single host can pin a worker — each target is capped at 3× `-timeout` by a watchdog that closes the connection on expiry.
+Per-target result lines go to **stdout**; protocol logs (structured zerolog) go to **stderr** at the level you pick. Pipe stdout to a file, leave stderr on the terminal. No single host can pin a worker - each target is capped at 3× `-timeout` by a watchdog that closes the connection on expiry.
 
 ## how it works
 
 | technique | what it does |
 |-----------|--------------|
 | early bailout | stops at the first bitmap update; never negotiates input, sound, or a full session |
-| coherent `TS_UD_CS_CORE` | emits color-depth / capability fields modern Server 2012R2+ accept — they RST otherwise |
+| coherent `TS_UD_CS_CORE` | emits color-depth / capability fields modern Server 2012R2+ accept - they RST otherwise |
 | neg-failure retry | on `RDP_NEG_FAILURE`, retries the X.224 request with a downgraded protocol set |
 | CredSSP fallback | Kerberos AP-REQ → NTLMv2 → anonymous, transparently, in one code path |
-| 512-bit RSA | works around Go's `crypto/rsa` minimum-key guard — Standard Security exchange keys are 512-bit ([MS-RDPBCGR] §5.3.4) |
+| 512-bit RSA | works around Go's `crypto/rsa` minimum-key guard - Standard Security exchange keys are 512-bit ([MS-RDPBCGR] §5.3.4) |
 | RLE decode | decompresses MS-RDPBCGR RLE bitmaps; 15/16/24/32 bpp bottom-up DIB row flip |
 | watchdog | 3× `-timeout` hard cap per target so a slow host can't wedge a worker |
 
@@ -110,7 +110,7 @@ Per-target result lines go to **stdout**; protocol logs (structured zerolog) go 
 
 ## the connection sequence
 
-The walk from open socket to first frame. Everything after the bitmap update — input, virtual channels, session teardown — is never reached.
+The walk from open socket to first frame. Everything after the bitmap update - input, virtual channels, session teardown - is never reached.
 
 ```mermaid
 sequenceDiagram
@@ -124,7 +124,7 @@ sequenceDiagram
         S->>C: TLS handshake + cert chain
     end
     opt PROTOCOL_HYBRID (NLA)
-        Note over C,S: CredSSP — SPNEGO / NTLMv2 or Kerberos AP-REQ
+        Note over C,S: CredSSP - SPNEGO / NTLMv2 or Kerberos AP-REQ
     end
     C->>S: MCS Connect Initial (GCC: TS_UD_CS_CORE / SEC / NET)
     S->>C: MCS Connect Response (server core / security / net)
@@ -138,7 +138,7 @@ sequenceDiagram
     C->>S: Synchronize / Control / Font List
     S->>C: Bitmap Update (slow-path or fast-path)
     Note over C: decode DIB / RLE → PNG, hang up
-    rect rgb(0,0,0,0.05)
+    rect rgba(0,0,0,0.05)
     Note over C,S: never reached
     C-->>S: input events / virtual channel data
     end
@@ -168,7 +168,7 @@ flowchart TB
 
 **`-anonymous`** is what Shodan and friends use to paint the lock screen on NLA-required Windows. It runs the CredSSP/NTLMSSP exchange with the [MS-NLMP] §3.1.5.1.2 anonymous `AUTHENTICATE_MESSAGE` (1-byte `0x00` LmChallengeResponse, empty NtChallengeResponse, zero session key); if the server's GINA renders the lock screen before tearing down the channel, you get a one-shot capture. **Trade-off:** forcing HYBRID into the NegReq makes modern hosts that would have answered `PROTOCOL_RDP` / `PROTOCOL_SSL` pick HYBRID instead, and most of them have NTLM disabled at the SSPI layer (`SEC_E_INVALID_TOKEN`), so the captured-host count drops. Use it when you specifically want NLA-gated targets and don't mind losing the legacy-NLA-off ones in the same run.
 
-**`-kerberos`** runs CredSSP with an RFC 4121 GSS-Kerberos AP-REQ (SPN `TERMSRV/<host>`) built from your credential cache — populate it with `kinit` first. Any Kerberos failure (no ccache, KDC unreachable, `KRB-ERROR`) transparently falls back to the NTLM path, so the flag is safe to leave on for mixed AD / standalone runs.
+**`-kerberos`** runs CredSSP with an RFC 4121 GSS-Kerberos AP-REQ (SPN `TERMSRV/<host>`) built from your credential cache - populate it with `kinit` first. Any Kerberos failure (no ccache, KDC unreachable, `KRB-ERROR`) transparently falls back to the NTLM path, so the flag is safe to leave on for mixed AD / standalone runs.
 
 ## library
 
@@ -206,7 +206,7 @@ func main() {
 }
 ```
 
-`rdp.SetLogger`, `rdp.SetLogOutput`, and `rdp.SetLogLevel` are the only logging knobs the library exposes — `rdp.SetLogger(zerolog.Nop())` silences it entirely.
+`rdp.SetLogger`, `rdp.SetLogOutput`, and `rdp.SetLogLevel` are the only logging knobs the library exposes - `rdp.SetLogger(zerolog.Nop())` silences it entirely.
 
 ## protocol coverage
 
@@ -259,13 +259,13 @@ pkg/bitmap/              bitmap pixel decoders
 
 ## specifications
 
-- [MS-RDPBCGR](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/) — RDP Basic Connectivity & Graphics Remoting
-- [MS-RDPELE](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpele/) — RDP Licensing Extension
-- [MS-CSSP](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-cssp/) — CredSSP
-- [MS-NLMP](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-nlmp/) — NTLM
-- [ITU-T T.125](https://www.itu.int/rec/T-REC-T.125) / [T.124](https://www.itu.int/rec/T-REC-T.124) — MCS / GCC
-- [ITU-T X.224](https://www.itu.int/rec/T-REC-X.224) / [X.691](https://www.itu.int/rec/T-REC-X.691) — COTP / PER
-- [RFC 1006](https://www.rfc-editor.org/rfc/rfc1006) — TPKT over TCP
+- [MS-RDPBCGR](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/) - RDP Basic Connectivity & Graphics Remoting
+- [MS-RDPELE](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpele/) - RDP Licensing Extension
+- [MS-CSSP](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-cssp/) - CredSSP
+- [MS-NLMP](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-nlmp/) - NTLM
+- [ITU-T T.125](https://www.itu.int/rec/T-REC-T.125) / [T.124](https://www.itu.int/rec/T-REC-T.124) - MCS / GCC
+- [ITU-T X.224](https://www.itu.int/rec/T-REC-X.224) / [X.691](https://www.itu.int/rec/T-REC-X.691) - COTP / PER
+- [RFC 1006](https://www.rfc-editor.org/rfc/rfc1006) - TPKT over TCP
 - [RFC 4178](https://www.rfc-editor.org/rfc/rfc4178) (SPNEGO) / [RFC 4121](https://www.rfc-editor.org/rfc/rfc4121) (GSS-Kerberos)
 - [RFC 5246](https://www.rfc-editor.org/rfc/rfc5246) (TLS 1.2) / [RFC 6066](https://www.rfc-editor.org/rfc/rfc6066) (SNI)
 
@@ -289,4 +289,4 @@ If this tool is useful to you:
 
 ## license
 
-MPL-2.0 — see [LICENSE](LICENSE).
+MPL-2.0 - see [LICENSE](LICENSE).
