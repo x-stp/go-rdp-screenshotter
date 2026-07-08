@@ -83,7 +83,7 @@ release:
     ## install
 
     ```bash
-    go install github.com/x-stp/rdp-screenshotter-go/cmd/rdp-screenshotter@{{ .Tag }}
+    go install github.com/x-stp/go-rdp-screenshotter/cmd/rdp-screenshotter@{{ .Tag }}
     ```
 
     Or download the binary for your platform from the assets below.

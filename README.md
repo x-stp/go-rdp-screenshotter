@@ -31,7 +31,7 @@ flowchart LR
 ## install
 
 ```bash
-go install github.com/x-stp/rdp-screenshotter-go/cmd/rdp-screenshotter@latest
+go install github.com/x-stp/go-rdp-screenshotter/cmd/rdp-screenshotter@latest
 ```
 
 Or build from source:
@@ -183,7 +183,7 @@ import (
     "time"
 
     "github.com/rs/zerolog"
-    "github.com/x-stp/rdp-screenshotter-go/pkg/rdp"
+    "github.com/x-stp/go-rdp-screenshotter/pkg/rdp"
 )
 
 func main() {

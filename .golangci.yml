@@ -1,4 +1,4 @@
-# golangci-lint v2 config for rdp-screenshotter-go.
+# golangci-lint v2 config for go-rdp-screenshotter.
 #
 # The default linter set (errcheck, govet, ineffassign, staticcheck, unused)
 # is kept on. The tuning below documents two deliberate policy calls:
@@ -28,14 +28,14 @@ linters:
         - (*bytes.Reader).Seek
         # WriteTo targets are always *bytes.Buffer here (see sendPDU); the
         # actual socket write in sendPDU/conn.Write is checked.
-        - (*github.com/x-stp/rdp-screenshotter-go/pkg/rdp.TPKTHeader).WriteTo
-        - (*github.com/x-stp/rdp-screenshotter-go/pkg/rdp.X224ConnectionRequest).WriteTo
+        - (*github.com/x-stp/go-rdp-screenshotter/pkg/rdp.TPKTHeader).WriteTo
+        - (*github.com/x-stp/go-rdp-screenshotter/pkg/rdp.X224ConnectionRequest).WriteTo
         # Close on a conn/file we are done with, and read-deadline sets whose
         # only failure mode (closed conn) is surfaced by the following Read.
         - (net.Conn).Close
         - (net.Conn).SetReadDeadline
         - (*os.File).Close
-        - (*github.com/x-stp/rdp-screenshotter-go/pkg/rdp.Client).Close
+        - (*github.com/x-stp/go-rdp-screenshotter/pkg/rdp.Client).Close
     staticcheck:
       checks:
         - all

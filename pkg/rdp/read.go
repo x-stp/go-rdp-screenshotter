@@ -13,7 +13,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/x-stp/rdp-screenshotter-go/pkg/bitmap"
+	"github.com/x-stp/go-rdp-screenshotter/pkg/bitmap"
 )
 
 // canvasWidth / canvasHeight match the GCC client core data we advertise in

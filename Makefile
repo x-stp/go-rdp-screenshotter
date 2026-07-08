@@ -1,5 +1,5 @@
 BIN        := rdp-screenshotter
-PKG        := github.com/x-stp/rdp-screenshotter-go
+PKG        := github.com/x-stp/go-rdp-screenshotter
 CMDS       := ./cmd/rdp-screenshotter ./cmd/credssp-test
 GOFLAGS    ?= -trimpath
 LDFLAGS    ?= -s -w
