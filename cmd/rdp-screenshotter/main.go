@@ -41,6 +41,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -56,17 +57,51 @@ const (
 	outputFormatJSON = "json"
 )
 
-// Build metadata, injected by goreleaser ldflags (see .goreleaser.yaml).
+// Build metadata, injected by goreleaser ldflags (see .goreleaser.yaml) for
+// released binaries. For `go install`/`go build` builds these stay at their
+// defaults, so buildInfo falls back to the module version and VCS stamp that
+// the Go toolchain embeds.
 var (
 	version = "dev"
 	commit  = "none"
 	date    = "unknown"
 )
 
+// buildInfo returns the version, commit, and date to print. It prefers the
+// goreleaser-injected ldflags; when those are absent (a plain `go install`),
+// it reads runtime/debug.BuildInfo so `@v0.1.0` installs still report v0.1.0.
+func buildInfo() (v, c, d string) {
+	v, c, d = version, commit, date
+	if v != "dev" {
+		return v, c, d
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return v, c, d
+	}
+	if mv := info.Main.Version; mv != "" && mv != "(devel)" {
+		v = mv
+	}
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			if c == "none" && len(s.Value) >= 7 {
+				c = s.Value[:7]
+			}
+		case "vcs.time":
+			if d == "unknown" {
+				d = s.Value
+			}
+		}
+	}
+	return v, c, d
+}
+
 func main() {
 	cfg := parseFlags()
 	if cfg.showVersion {
-		fmt.Printf("rdp-screenshotter %s (%s) built %s\n", version, commit, date)
+		v, c, d := buildInfo()
+		fmt.Printf("rdp-screenshotter %s (%s) built %s\n", v, c, d)
 		return
 	}
 	configureLogger(cfg.logLevel)
