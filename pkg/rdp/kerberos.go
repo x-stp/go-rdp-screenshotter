@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2024-2026 x-stp
+
 package rdp
 
 // Kerberos-via-CredSSP support per RFC 4121 (GSS-Kerberos) inside RFC 4178

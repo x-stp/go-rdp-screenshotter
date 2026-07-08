@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2024-2026 x-stp
+
 package bitmap
 
 // RDP bitmap RLE decompression per [MS-RDPBCGR] §3.1.9.1 +

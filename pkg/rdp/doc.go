@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2024-2026 x-stp
+
 // Package rdp implements a small Remote Desktop Protocol client whose only
 // purpose is to walk an RDP connection far enough to capture the first
 // server-supplied bitmap update and return it as a PNG.

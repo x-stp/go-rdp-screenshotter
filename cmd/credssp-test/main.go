@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2024-2026 x-stp
+
 // Command credssp-test exercises the CredSSP/NLA path of pkg/rdp against a
 // single server. It is purely a diagnostic harness, not a screenshot tool.
 //

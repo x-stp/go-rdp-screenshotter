@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2024-2026 x-stp
+
 package rdp
 
 // NTLMv2 mandates MD4(unicode(password)) for NTOWFv2 per [MS-NLMP] §3.3.2 and
