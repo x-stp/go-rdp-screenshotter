@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"github.com/x-stp/rdp-screenshotter-go/pkg/rdp"
+	"github.com/x-stp/go-rdp-screenshotter/pkg/rdp"
 )
 
 func main() {

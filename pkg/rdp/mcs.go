@@ -13,7 +13,7 @@ import (
 	"math/big"
 	"slices"
 
-	"github.com/x-stp/rdp-screenshotter-go/pkg/rdp/per"
+	"github.com/x-stp/go-rdp-screenshotter/pkg/rdp/per"
 	"github.com/zmap/zcrypto/x509"
 )
 

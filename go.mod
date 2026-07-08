@@ -1,4 +1,4 @@
-module github.com/x-stp/rdp-screenshotter-go
+module github.com/x-stp/go-rdp-screenshotter
 
 go 1.25.0
 
