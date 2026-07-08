@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2024-2026 x-stp
+
 // Package bitmap decodes RDP bitmap update rectangles ([MS-RDPBCGR] §2.2.9.1)
 // into Go images and encodes the composited canvas to PNG. It handles the
 // 15/16/24/32-bpp uncompressed layouts and the RLE-compressed stream

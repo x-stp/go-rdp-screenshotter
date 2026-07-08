@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Pre-commit: format staged Go files, then vet and test.
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+restage=()
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  case "$f" in
+    *.go)
+      gofmt -w -- "$f"
+      restage+=("$f")
+      ;;
+  esac
+done <<EOF
+$(git diff --cached --name-only --diff-filter=ACM)
+EOF
+
+if [ "${#restage[@]}" -gt 0 ]; then
+  git add -- "${restage[@]}"
+fi
+
+go vet ./...
+go test ./...

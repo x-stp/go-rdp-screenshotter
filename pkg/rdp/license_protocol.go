@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2024-2026 x-stp
+
 package rdp
 
 // This file implements the RDP licensing protocol per [MS-RDPELE]. The

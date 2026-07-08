@@ -3,7 +3,7 @@
 Pure-Go RDP client with one job: walk the protocol to the first server bitmap and dump it to a PNG. No cgo, no FreeRDP shell-out, no X server.
 
 [![CI](https://github.com/x-stp/rdp-screenshotter-go/actions/workflows/ci.yml/badge.svg)](https://github.com/x-stp/rdp-screenshotter-go/actions/workflows/ci.yml)
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![License: MPL-2.0](https://img.shields.io/badge/License-MPL%202.0-brightgreen.svg)](https://opensource.org/licenses/MPL-2.0)
 
 ## what it does
 
@@ -289,4 +289,4 @@ If this tool is useful to you:
 
 ## license
 
-AGPL-3.0 — see [LICENSE](LICENSE).
+MPL-2.0 — see [LICENSE](LICENSE).

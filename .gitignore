@@ -68,3 +68,5 @@ rdp_targets.txt
 *.json.gz
 rdp_fresh*
 ips.txt
+# goreleaser output
+/dist/

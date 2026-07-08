@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2024-2026 x-stp
+
 // Package per implements the subset of ITU-T X.691 PACKED ENCODING RULES
 // (PER, aligned variant) needed by RDP's MCS layer ([MS-RDPBCGR] §2.2.1.3).
 //
